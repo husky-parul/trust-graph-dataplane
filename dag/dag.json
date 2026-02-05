@@ -1,0 +1,130 @@
+{
+  "run_id": "f96d7278-1d3b-930c-b116-90dce262cefb",
+  "principal": "user:claude",
+  "nodes": [
+    {
+      "id": "agent:read-agent",
+      "type": "agent",
+      "label": "read-agent"
+    },
+    {
+      "id": "resource:mock-database",
+      "type": "resource",
+      "label": "mock-database"
+    },
+    {
+      "id": "user:claude",
+      "type": "principal",
+      "label": "claude"
+    },
+    {
+      "id": "agent:chat-agent",
+      "type": "agent",
+      "label": "chat-agent"
+    },
+    {
+      "id": "agent:summary-agent",
+      "type": "agent",
+      "label": "summary-agent"
+    },
+    {
+      "id": "agent:sales-agent",
+      "type": "agent",
+      "label": "sales-agent"
+    }
+  ],
+  "edges": [
+    {
+      "source": "agent:read-agent",
+      "target": "resource:mock-database",
+      "hop_kind": "agent_to_resource",
+      "count": 2,
+      "span_ids": [
+        "78b09c5fabb13115",
+        "81edf4083f08a8a5"
+      ],
+      "first_ts": 1770330147380626,
+      "last_ts": 1770330147393508,
+      "total_duration_us": 4196
+    },
+    {
+      "source": "user:claude",
+      "target": "agent:chat-agent",
+      "hop_kind": "principal_to_agent",
+      "count": 2,
+      "span_ids": [
+        "9cab9453f9b3fd5d"
+      ],
+      "first_ts": 1770330147347218,
+      "last_ts": 1770330147348096,
+      "total_duration_us": 104271
+    },
+    {
+      "source": "agent:summary-agent",
+      "target": "agent:read-agent",
+      "hop_kind": "agent_to_agent",
+      "count": 2,
+      "span_ids": [
+        "8993b9d77ce39d0d"
+      ],
+      "first_ts": 1770330147390463,
+      "last_ts": 1770330147391215,
+      "total_duration_us": 11693
+    },
+    {
+      "source": "agent:sales-agent",
+      "target": "resource:mock-database",
+      "hop_kind": "agent_to_resource",
+      "count": 1,
+      "span_ids": [
+        "02ea71ccb9eeabef"
+      ],
+      "first_ts": 1770330147368508,
+      "last_ts": 1770330147368508,
+      "total_duration_us": 3135
+    },
+    {
+      "source": "agent:chat-agent",
+      "target": "agent:sales-agent",
+      "hop_kind": "agent_to_agent",
+      "count": 1,
+      "span_ids": [
+        "b9920a7d3d5d5032"
+      ],
+      "first_ts": 1770330147363436,
+      "last_ts": 1770330147363436,
+      "total_duration_us": 8834
+    },
+    {
+      "source": "agent:chat-agent",
+      "target": "agent:summary-agent",
+      "hop_kind": "agent_to_agent",
+      "count": 1,
+      "span_ids": [
+        "6987be2dff18f9fe"
+      ],
+      "first_ts": 1770330147385792,
+      "last_ts": 1770330147385792,
+      "total_duration_us": 12625
+    },
+    {
+      "source": "agent:chat-agent",
+      "target": "agent:read-agent",
+      "hop_kind": "agent_to_agent",
+      "count": 1,
+      "span_ids": [
+        "01bee5bb5ff61478"
+      ],
+      "first_ts": 1770330147374953,
+      "last_ts": 1770330147374953,
+      "total_duration_us": 8366
+    }
+  ],
+  "summary": {
+    "total_nodes": 6,
+    "total_edges": 7,
+    "principals": 1,
+    "agents": 4,
+    "resources": 1
+  }
+}

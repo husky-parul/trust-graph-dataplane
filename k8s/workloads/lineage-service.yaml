@@ -355,8 +355,9 @@ data:
 
         def build_explanation(self, dag, target_node):
             """Build explanation for why a node was accessed."""
-            # Build reverse adjacency list (target -> sources)
-            reverse_edges = {}
+            # Build adjacency lists
+            reverse_edges = {}  # target -> [sources]
+            forward_edges = {}  # source -> [targets]
             edge_info = {}
             for edge in dag["edges"]:
                 target = edge["target"]
@@ -364,6 +365,9 @@ data:
                 if target not in reverse_edges:
                     reverse_edges[target] = []
                 reverse_edges[target].append(source)
+                if source not in forward_edges:
+                    forward_edges[source] = []
+                forward_edges[source].append(target)
                 edge_info[(source, target)] = edge
 
             # Check if target node exists
@@ -371,52 +375,64 @@ data:
             if target_node not in node_ids:
                 return {"error": f"Node '{target_node}' not found in DAG", "available_nodes": sorted(list(node_ids))}
 
-            # Find all paths from target back to principal(s)
-            paths = []
-            def find_paths(current, path):
-                if current not in reverse_edges:
-                    # Reached a root (should be principal)
-                    paths.append(list(reversed(path)))
+            # Find ALL distinct paths from principal to target
+            # This gives us each unique "cause" for the access
+            principal = dag.get("principal")
+            all_paths = []
+            def find_paths_forward(current, path):
+                if current == target_node:
+                    all_paths.append(path[:])
                     return
-                for source in reverse_edges[current]:
-                    find_paths(source, path + [source])
+                for next_node in forward_edges.get(current, []):
+                    if next_node not in path:  # avoid cycles
+                        find_paths_forward(next_node, path + [next_node])
 
-            find_paths(target_node, [target_node])
+            if principal:
+                find_paths_forward(principal, [principal])
 
-            # Build direct accessors (who directly touched this node)
-            direct_accessors = reverse_edges.get(target_node, [])
-
-            # Build delegation chain for each accessor with timestamps
-            chains = []
-            for accessor in direct_accessors:
+            # Build cause groups: each distinct path is a separate "cause"
+            # Key by (accessor, immediate_delegator) to separate same-accessor different-cause
+            cause_groups = []
+            for path in all_paths:
+                if len(path) < 2:
+                    continue
+                accessor = path[-2]  # node before target
                 edge = edge_info.get((accessor, target_node), {})
-                chain = {
+
+                # Build delegation chain (closest-first order)
+                # path is [principal, ..., accessor, target]
+                # delegation is [accessor's caller, ..., principal]
+                delegation_chain = []
+                for i in range(len(path) - 2, 0, -1):  # from accessor back to after principal
+                    delegator = path[i - 1]
+                    delegatee = path[i]
+                    del_edge = edge_info.get((delegator, delegatee), {})
+                    delegation_chain.append({
+                        "actor": delegator,
+                        "hop_kind": del_edge.get("hop_kind", "unknown"),
+                        "first_ts": del_edge.get("first_ts", 0),
+                    })
+
+                cause = {
                     "accessor": accessor,
                     "hop_kind": edge.get("hop_kind", "unknown"),
                     "call_count": edge.get("count", 1),
                     "first_ts": edge.get("first_ts", 0),
                     "last_ts": edge.get("last_ts", 0),
                     "duration_us": edge.get("total_duration_us", 0),
-                    "delegated_by": [],
+                    "full_path": path,
+                    "delegated_by": delegation_chain,  # closest-first order
                 }
-                # Trace back from accessor
-                current = accessor
-                while current in reverse_edges:
-                    upstream = reverse_edges[current][0]  # Take first path
-                    upstream_edge = edge_info.get((upstream, current), {})
-                    chain["delegated_by"].append({
-                        "actor": upstream,
-                        "hop_kind": upstream_edge.get("hop_kind", "unknown"),
-                        "first_ts": upstream_edge.get("first_ts", 0),
-                    })
-                    current = upstream
-                chains.append(chain)
+                cause_groups.append(cause)
 
-            # Sort chains by first timestamp
-            chains.sort(key=lambda c: c["first_ts"])
+            # Sort by timestamp
+            cause_groups.sort(key=lambda c: c["first_ts"])
 
-            # Detect parallel execution (overlapping time windows)
-            parallel_groups = self.detect_parallel_execution(chains)
+            # Detect parallel execution
+            parallel_groups = self.detect_parallel_execution(cause_groups)
+
+            # For backwards compat, also list direct accessors
+            direct_accessors = list(set(c["accessor"] for c in cause_groups))
 
             # Find the ultimate principal
             principal = dag.get("principal", "unknown")
@@ -429,10 +445,10 @@ data:
                 "run_id": dag["run_id"],
                 "principal": principal,
                 "direct_accessors": direct_accessors,
-                "access_chains": chains,
+                "cause_groups": cause_groups,  # each distinct path = one cause
                 "parallel_groups": parallel_groups,
-                "all_paths_to_principal": paths,
-                "answer": self.generate_answer(target_node, principal, chains, parallel_groups),
+                "delegation_order": "closest-first (immediate caller first, principal last)",
+                "answer": self.generate_answer(target_node, principal, cause_groups, parallel_groups),
             }
 
             return explanation
@@ -471,9 +487,9 @@ data:
 
             return parallel_groups
 
-        def generate_answer(self, target, principal, chains, parallel_groups=None):
+        def generate_answer(self, target, principal, cause_groups, parallel_groups=None):
             """Generate a human-readable answer with temporal context."""
-            if not chains:
+            if not cause_groups:
                 return f"No access path found to {target}"
 
             lines = [f"{target} was accessed because:"]
@@ -484,28 +500,38 @@ data:
                     lines.append(f"  [PARALLEL] {', '.join(group)} ran concurrently")
                 lines.append("")
 
-            for i, chain in enumerate(chains, 1):
-                accessor = chain["accessor"]
-                count = chain["call_count"]
-                count_str = f" ({count}x)" if count > 1 else ""
+            # Group causes by accessor to show multiple paths through same accessor
+            accessor_causes = {}
+            for cause in cause_groups:
+                acc = cause["accessor"]
+                if acc not in accessor_causes:
+                    accessor_causes[acc] = []
+                accessor_causes[acc].append(cause)
 
-                # Build the delegation path
-                delegation = chain["delegated_by"]
-                if delegation:
-                    path_parts = [d["actor"] for d in reversed(delegation)]
-                    path_parts.append(accessor)
-                    path_str = " -> ".join(path_parts)
-                    lines.append(f"  {i}. {accessor} accessed it{count_str}")
-                    lines.append(f"     delegation: {path_str}")
+            cause_num = 1
+            for accessor, causes in accessor_causes.items():
+                if len(causes) == 1:
+                    # Single path through this accessor
+                    cause = causes[0]
+                    path = cause.get("full_path", [])
+                    path_str = " -> ".join(path) if path else accessor
+                    lines.append(f"  {cause_num}. {path_str}")
+                    cause_num += 1
                 else:
-                    lines.append(f"  {i}. {accessor} accessed it directly{count_str}")
+                    # Multiple distinct paths through same accessor
+                    lines.append(f"  {cause_num}. {accessor} accessed it via {len(causes)} distinct paths:")
+                    for j, cause in enumerate(causes, 1):
+                        path = cause.get("full_path", [])
+                        path_str = " -> ".join(path) if path else "?"
+                        lines.append(f"       {cause_num}.{j}. {path_str}")
+                    cause_num += 1
 
             # Add temporal ordering note
-            if len(chains) > 1:
-                first = chains[0]["accessor"]
-                last = chains[-1]["accessor"]
-                if first != last:
-                    lines.append(f"\n  Temporal order: {first} was first, {last} was last")
+            if len(cause_groups) > 1:
+                first_path = cause_groups[0].get("full_path", [])
+                last_path = cause_groups[-1].get("full_path", [])
+                if first_path and last_path and first_path != last_path:
+                    lines.append(f"\n  Temporal: path {' -> '.join(first_path[:3])}... started first")
 
             return "\n".join(lines)
 
@@ -530,16 +556,20 @@ data:
                 lines.append(f"  - {accessor}")
 
             lines.append("")
-            lines.append("ACCESS CHAINS (ordered by time):")
+            lines.append("CAUSE GROUPS (each distinct delegation path):")
+            lines.append(f"(delegation order: {explanation.get('delegation_order', 'closest-first')})")
             lines.append("-" * 70)
 
-            for chain in explanation["access_chains"]:
-                accessor = chain["accessor"]
-                count = chain["call_count"]
-                duration = chain.get("duration_us", 0)
-                lines.append(f"  {accessor} (called {count}x, {duration}us)")
-                for d in chain["delegated_by"]:
-                    lines.append(f"    <- delegated by {d['actor']} [{d['hop_kind']}]")
+            for i, cause in enumerate(explanation.get("cause_groups", []), 1):
+                accessor = cause["accessor"]
+                path = cause.get("full_path", [])
+                duration = cause.get("duration_us", 0)
+                lines.append(f"  Cause {i}: {' -> '.join(path)}")
+                lines.append(f"           accessor={accessor}, duration={duration}us")
+                delegation = cause.get("delegated_by", [])
+                if delegation:
+                    del_str = " <- ".join([d["actor"] for d in delegation])
+                    lines.append(f"           delegated_by (closest-first): {del_str}")
 
             # Show parallel groups if any
             parallel = explanation.get("parallel_groups", [])

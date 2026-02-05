@@ -8,7 +8,7 @@
     "agent:read-agent",
     "agent:sales-agent"
   ],
-  "access_chains": [
+  "cause_groups": [
     {
       "accessor": "agent:sales-agent",
       "hop_kind": "agent_to_resource",
@@ -16,6 +16,12 @@
       "first_ts": 1770330147368508,
       "last_ts": 1770330147368508,
       "duration_us": 3135,
+      "full_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:sales-agent",
+        "resource:mock-database"
+      ],
       "delegated_by": [
         {
           "actor": "agent:chat-agent",
@@ -36,6 +42,13 @@
       "first_ts": 1770330147380626,
       "last_ts": 1770330147393508,
       "duration_us": 4196,
+      "full_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:summary-agent",
+        "agent:read-agent",
+        "resource:mock-database"
+      ],
       "delegated_by": [
         {
           "actor": "agent:summary-agent",
@@ -53,34 +66,41 @@
           "first_ts": 1770330147347218
         }
       ]
+    },
+    {
+      "accessor": "agent:read-agent",
+      "hop_kind": "agent_to_resource",
+      "call_count": 2,
+      "first_ts": 1770330147380626,
+      "last_ts": 1770330147393508,
+      "duration_us": 4196,
+      "full_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:read-agent",
+        "resource:mock-database"
+      ],
+      "delegated_by": [
+        {
+          "actor": "agent:chat-agent",
+          "hop_kind": "agent_to_agent",
+          "first_ts": 1770330147374953
+        },
+        {
+          "actor": "user:claude",
+          "hop_kind": "principal_to_agent",
+          "first_ts": 1770330147347218
+        }
+      ]
     }
   ],
   "parallel_groups": [
     [
       "agent:sales-agent",
+      "agent:read-agent",
       "agent:read-agent"
     ]
   ],
-  "all_paths_to_principal": [
-    [
-      "user:claude",
-      "agent:chat-agent",
-      "agent:summary-agent",
-      "agent:read-agent",
-      "resource:mock-database"
-    ],
-    [
-      "user:claude",
-      "agent:chat-agent",
-      "agent:read-agent",
-      "resource:mock-database"
-    ],
-    [
-      "user:claude",
-      "agent:chat-agent",
-      "agent:sales-agent",
-      "resource:mock-database"
-    ]
-  ],
-  "answer": "resource:mock-database was accessed because:\n  [PARALLEL] agent:sales-agent, agent:read-agent ran concurrently\n\n  1. agent:sales-agent accessed it\n     delegation: user:claude -> agent:chat-agent -> agent:sales-agent\n  2. agent:read-agent accessed it (2x)\n     delegation: user:claude -> agent:chat-agent -> agent:summary-agent -> agent:read-agent\n\n  Temporal order: agent:sales-agent was first, agent:read-agent was last"
+  "delegation_order": "closest-first (immediate caller first, principal last)",
+  "answer": "resource:mock-database was accessed because:\n  [PARALLEL] agent:sales-agent, agent:read-agent, agent:read-agent ran concurrently\n\n  1. user:claude -> agent:chat-agent -> agent:sales-agent -> resource:mock-database\n  2. agent:read-agent accessed it via 2 distinct paths:\n       2.1. user:claude -> agent:chat-agent -> agent:summary-agent -> agent:read-agent -> resource:mock-database\n       2.2. user:claude -> agent:chat-agent -> agent:read-agent -> resource:mock-database\n\n  Temporal: path user:claude -> agent:chat-agent -> agent:sales-agent... started first"
 }
