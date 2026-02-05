@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-egress
+  namespace: egress-gateway
+  labels:
+    app: envoy-egress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: envoy-egress
+  template:
+    metadata:
+      labels:
+        app: envoy-egress
+    spec:
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.29.1
+          args:
+            - -c
+            - /etc/envoy/envoy.yaml
+            - --log-level
+            - info
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9901
+              name: admin
+          volumeMounts:
+            - name: config
+              mountPath: /etc/envoy
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9901
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 9901
+            initialDelaySeconds: 10
+            periodSeconds: 15
+      volumes:
+        - name: config
+          configMap:
+            name: envoy-egress-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy-egress
+  namespace: egress-gateway
+spec:
+  selector:
+    app: envoy-egress
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+    - name: admin
+      port: 9901
+      targetPort: 9901
