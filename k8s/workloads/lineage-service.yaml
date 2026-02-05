@@ -1,0 +1,308 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lineage-service-config
+  namespace: workloads
+data:
+  server.py: |
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import json
+    import urllib.request
+    import urllib.parse
+    import os
+
+    JAEGER_URL = os.environ.get("JAEGER_URL", "http://jaeger.observability.svc.cluster.local:16686")
+
+    class LineageService(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            path_parts = parsed.path.strip("/").split("/")
+            query_params = urllib.parse.parse_qs(parsed.query)
+            output_format = query_params.get("format", ["json"])[0]
+
+            if path_parts == ["lineage", "all"]:
+                self.handle_all_traces(output_format)
+            elif len(path_parts) >= 2 and path_parts[0] == "lineage":
+                run_id = path_parts[1]
+                self.handle_lineage(run_id, output_format)
+            elif parsed.path == "/health":
+                self.send_json({"status": "ok"})
+            else:
+                self.send_json({"error": "Use /lineage/all or /lineage/{run_id}?format=json|text"}, 400)
+
+        def handle_all_traces(self, output_format):
+            """List all available trace IDs from Jaeger (envoy-ingress only)."""
+            try:
+                # Only query envoy-ingress service, filter for traces with trust.lineage tag
+                tags_json = json.dumps({"trust.lineage": "true"})
+                encoded_tags = urllib.parse.quote(tags_json)
+                traces_url = f"{JAEGER_URL}/api/traces?service=envoy-ingress&tags={encoded_tags}&limit=100"
+                req = urllib.request.Request(traces_url)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    traces_data = json.loads(resp.read().decode())
+
+                all_traces = []
+                run_id_groups = {}  # Group traces by trust.run_id
+
+                for trace in traces_data.get("data", []):
+                    trace_id = trace.get("traceID")
+                    if trace_id:
+                        spans = trace.get("spans", [])
+                        first_span = spans[0] if spans else {}
+                        tags = {t["key"]: t["value"] for t in first_span.get("tags", [])}
+                        run_id = tags.get("trust.run_id", "unknown")
+
+                        if run_id not in run_id_groups:
+                            run_id_groups[run_id] = {
+                                "run_id": run_id,
+                                "trace_ids": [],
+                                "principal": tags.get("trust.principal_id", "unknown"),
+                                "start_time": first_span.get("startTime", 0),
+                                "total_spans": 0,
+                            }
+                        run_id_groups[run_id]["trace_ids"].append(trace_id)
+                        run_id_groups[run_id]["total_spans"] += len(spans)
+
+                # Convert to list and sort by start time (newest first)
+                unique_traces = list(run_id_groups.values())
+                unique_traces.sort(key=lambda x: x["start_time"], reverse=True)
+
+                result = {
+                    "total_runs": len(unique_traces),
+                    "runs": unique_traces,
+                }
+
+                if output_format == "text":
+                    self.send_text(self.format_all_traces_text(result))
+                else:
+                    self.send_json(result)
+
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
+        def format_all_traces_text(self, result):
+            """Format trace list as human-readable text."""
+            lines = [
+                "=" * 80,
+                "TRUST LINEAGE RUNS (envoy-ingress)",
+                "=" * 80,
+                f"Total: {result['total_runs']} runs",
+                "",
+                f"{'RUN ID':<40} {'PRINCIPAL':<15} {'SPANS':<6} TRACES",
+                "-" * 80,
+            ]
+            for r in result["runs"]:
+                lines.append(f"{r['run_id']:<40} {r['principal']:<15} {r['total_spans']:<6} {len(r['trace_ids'])}")
+            lines.append("=" * 80)
+            return "\n".join(lines)
+
+        def handle_lineage(self, run_id, output_format):
+            try:
+                # Query Jaeger for traces with this trust.run_id tag
+                tags_json = json.dumps({"trust.run_id": run_id})
+                encoded_tags = urllib.parse.quote(tags_json)
+                search_url = f"{JAEGER_URL}/api/traces?service=envoy-ingress&tags={encoded_tags}&limit=100"
+                req = urllib.request.Request(search_url)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    trace_data = json.loads(resp.read().decode())
+
+                lineage = self.build_lineage_from_multiple_traces(trace_data, run_id)
+
+                if output_format == "text":
+                    self.send_text(self.format_lineage_text(lineage))
+                else:
+                    self.send_json(lineage)
+
+            except urllib.error.HTTPError as e:
+                self.send_json({"error": f"Jaeger error: {e.code}"}, 500)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
+        def build_lineage_from_multiple_traces(self, trace_data, run_id):
+            """Extract trust lineage from multiple Jaeger traces sharing the same run_id."""
+            if not trace_data.get("data") or len(trace_data["data"]) == 0:
+                return {"error": f"No traces found for run_id: {run_id}"}
+
+            # Collect all spans from all traces
+            all_spans = []
+            all_processes = {}
+            for trace in trace_data["data"]:
+                spans = trace.get("spans", [])
+                processes = trace.get("processes", {})
+                all_processes.update(processes)
+                for span in spans:
+                    span["_processes"] = processes
+                    all_spans.append(span)
+
+            return self.build_lineage_from_spans(all_spans, all_processes, run_id)
+
+        def build_lineage_from_spans(self, spans, processes, run_id):
+            """Build lineage from a list of spans."""
+
+            # Extract hops from spans, deduplicating by span_id + operation
+            seen_spans = set()
+            hops = []
+            for span in spans:
+                tags = {t["key"]: t["value"] for t in span.get("tags", [])}
+                trust_tags = {k: v for k, v in tags.items() if k.startswith("trust.")}
+
+                if trust_tags:
+                    span_key = (span["spanID"], span["operationName"])
+                    if span_key in seen_spans:
+                        continue
+                    seen_spans.add(span_key)
+
+                    hop = {
+                        "span_id": span["spanID"],
+                        "trace_id": span["traceID"],
+                        "parent_span_id": span.get("references", [{}])[0].get("spanID") if span.get("references") else None,
+                        "operation": span["operationName"],
+                        "service": processes.get(span["processID"], {}).get("serviceName", "unknown"),
+                        "start_time": span["startTime"],
+                        "duration_us": span["duration"],
+                        "trust": {
+                            "principal_id": trust_tags.get("trust.principal_id", "unknown"),
+                            "run_id": trust_tags.get("trust.run_id", run_id),
+                            "hop_kind": trust_tags.get("trust.hop_kind", "unknown"),
+                            "source": trust_tags.get("trust.source", "unknown"),
+                            "target": trust_tags.get("trust.target", "unknown"),
+                        }
+                    }
+                    hops.append(hop)
+
+            # Sort by start time for chronological order
+            hops.sort(key=lambda h: h["start_time"])
+
+            # Build the lineage chain
+            lineage = {
+                "run_id": run_id,
+                "total_hops": len(hops),
+                "principal": hops[0]["trust"]["principal_id"] if hops else "unknown",
+                "chronology": [],
+                "agents_involved": set(),
+                "resources_accessed": set(),
+            }
+
+            for i, hop in enumerate(hops):
+                target = hop["trust"]["target"]
+                source = hop["trust"]["source"]
+
+                # Track agents and resources
+                if target.startswith("agent:"):
+                    lineage["agents_involved"].add(target)
+                elif target.startswith("resource:"):
+                    lineage["resources_accessed"].add(target)
+
+                lineage["chronology"].append({
+                    "step": i + 1,
+                    "hop_kind": hop["trust"]["hop_kind"],
+                    "source": source,
+                    "target": target,
+                    "operation": hop["operation"],
+                    "service": hop["service"],
+                    "duration_us": hop["duration_us"],
+                })
+
+            # Convert sets to lists for JSON serialization
+            lineage["agents_involved"] = list(lineage["agents_involved"])
+            lineage["resources_accessed"] = list(lineage["resources_accessed"])
+
+            return lineage
+
+        def format_lineage_text(self, lineage):
+            """Format lineage as human-readable text."""
+            if "error" in lineage:
+                return f"Error: {lineage['error']}"
+
+            lines = [
+                "=" * 60,
+                "TRUST LINEAGE REPORT",
+                "=" * 60,
+                f"Run ID:    {lineage['run_id']}",
+                f"Principal: {lineage['principal']}",
+                f"Total Hops: {lineage['total_hops']}",
+                "",
+                "AGENTS INVOLVED:",
+            ]
+            for agent in lineage["agents_involved"]:
+                lines.append(f"  - {agent}")
+
+            lines.append("")
+            lines.append("RESOURCES ACCESSED:")
+            for resource in lineage["resources_accessed"]:
+                lines.append(f"  - {resource}")
+
+            lines.append("")
+            lines.append("CHRONOLOGICAL FLOW:")
+            lines.append("-" * 60)
+
+            for step in lineage["chronology"]:
+                lines.append(f"Step {step['step']}: [{step['hop_kind']}]")
+                lines.append(f"  {step['source']} -> {step['target']}")
+                lines.append(f"  Operation: {step['operation']}")
+                lines.append(f"  Service: {step['service']}")
+                lines.append(f"  Duration: {step['duration_us']}us")
+                lines.append("")
+
+            lines.append("=" * 60)
+            return "\n".join(lines)
+
+        def send_json(self, data, status=200):
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(data, indent=2).encode())
+
+        def send_text(self, text, status=200):
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(text.encode())
+
+    if __name__ == "__main__":
+        print("[lineage-service] Starting on port 8080...")
+        HTTPServer(("0.0.0.0", 8080), LineageService).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lineage-service
+  namespace: workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lineage-service
+  template:
+    metadata:
+      labels:
+        app: lineage-service
+    spec:
+      containers:
+        - name: lineage-service
+          image: python:3.11-slim
+          command: ["python", "/app/server.py"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: JAEGER_URL
+              value: "http://jaeger.observability.svc.cluster.local:16686"
+          volumeMounts:
+            - name: config
+              mountPath: /app
+      volumes:
+        - name: config
+          configMap:
+            name: lineage-service-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lineage-service
+  namespace: workloads
+spec:
+  selector:
+    app: lineage-service
+  ports:
+    - port: 8080
+      targetPort: 8080
