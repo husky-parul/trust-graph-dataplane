@@ -14,6 +14,15 @@ data:
         {"id": 3, "name": "Charlie", "salary": 69000},
     ]
 
+    SALES = [
+        {"id": 1, "employee_id": 1, "amount": 15000, "product": "Widget Pro", "date": "2024-01-15"},
+        {"id": 2, "employee_id": 1, "amount": 22000, "product": "Enterprise Suite", "date": "2024-01-20"},
+        {"id": 3, "employee_id": 2, "amount": 8500, "product": "Widget Basic", "date": "2024-01-18"},
+        {"id": 4, "employee_id": 2, "amount": 31000, "product": "Enterprise Suite", "date": "2024-02-01"},
+        {"id": 5, "employee_id": 3, "amount": 12000, "product": "Widget Pro", "date": "2024-01-25"},
+        {"id": 6, "employee_id": 3, "amount": 9500, "product": "Widget Basic", "date": "2024-02-05"},
+    ]
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             # Log incoming headers for tracing
@@ -33,6 +42,12 @@ data:
                     self.wfile.write(json.dumps(emp).encode())
                 else:
                     self.wfile.write(json.dumps({"error": "not found"}).encode())
+            elif self.path == "/sales":
+                self.wfile.write(json.dumps({"sales": SALES}).encode())
+            elif self.path.startswith("/sales/employee/"):
+                emp_id = int(self.path.split("/")[-1])
+                emp_sales = [s for s in SALES if s["employee_id"] == emp_id]
+                self.wfile.write(json.dumps({"employee_id": emp_id, "sales": emp_sales}).encode())
             else:
                 self.wfile.write(json.dumps({"status": "ok", "service": "mock-database"}).encode())
 

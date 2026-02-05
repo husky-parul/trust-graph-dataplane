@@ -59,6 +59,13 @@ data:
                                 cluster: lineage_service
                               decorator:
                                 operation: "lineage-query"
+                            # Route for chat-agent orchestrator
+                            - match:
+                                prefix: "/chat"
+                              route:
+                                cluster: chat_agent_service
+                              decorator:
+                                operation: "ingress:chat-agent"
                             # Route for claude user -> summary-agent experiment
                             - match:
                                 prefix: "/summary"
@@ -149,7 +156,9 @@ data:
                                 -- Determine target based on path
                                 local path = request_handle:headers():get(":path") or "/"
                                 local target = "unknown"
-                                if string.find(path, "/summary") then
+                                if string.find(path, "/chat") then
+                                  target = "agent:chat-agent"
+                                elseif string.find(path, "/summary") then
                                   target = "agent:summary-agent"
                                 elseif string.find(path, "/caller") then
                                   target = "agent:caller-agent"
@@ -213,6 +222,19 @@ data:
                       address:
                         socket_address:
                           address: lineage-service.workloads.svc.cluster.local
+                          port_value: 8080
+
+        - name: chat_agent_service
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: chat_agent_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: chat-agent.workloads.svc.cluster.local
                           port_value: 8080
 
         - name: otel_collector

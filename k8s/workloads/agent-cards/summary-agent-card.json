@@ -1,0 +1,33 @@
+{
+  "name": "summary-agent",
+  "version": "1.0.0",
+  "description": "Aggregates and summarizes salary data from read-agent",
+  "capabilities": [
+    "summarize_salaries",
+    "calculate_average_salary",
+    "calculate_total_payroll"
+  ],
+  "endpoints": {
+    "base_url": "http://summary-agent.workloads.svc.cluster.local:8080",
+    "operations": {
+      "summarize_salaries": {
+        "method": "GET",
+        "path": "/summary/salaries",
+        "description": "Returns salary statistics: total employees, total salary, average salary"
+      },
+      "health": {
+        "method": "GET",
+        "path": "/",
+        "description": "Health check endpoint"
+      }
+    }
+  },
+  "dependencies": {
+    "downstream": ["read-agent"]
+  },
+  "trust_metadata": {
+    "agent_id": "agent:summary-agent",
+    "hop_kinds_supported": ["principal_to_agent", "agent_to_agent"],
+    "agents_called": ["agent:read-agent"]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "read-agent",
+  "version": "1.0.0",
+  "description": "Reads employee data from the mock database",
+  "capabilities": [
+    "read_employees",
+    "list_all_employees"
+  ],
+  "endpoints": {
+    "base_url": "http://read-agent.workloads.svc.cluster.local:8080",
+    "operations": {
+      "read_employees": {
+        "method": "GET",
+        "path": "/read/employees",
+        "description": "Returns all employees with their details (name, salary)"
+      },
+      "health": {
+        "method": "GET",
+        "path": "/",
+        "description": "Health check endpoint"
+      }
+    }
+  },
+  "dependencies": {
+    "downstream": ["mock-database"]
+  },
+  "trust_metadata": {
+    "agent_id": "agent:read-agent",
+    "hop_kinds_supported": ["principal_to_agent", "agent_to_agent"],
+    "resources_accessed": ["resource:mock-database"]
+  }
+}

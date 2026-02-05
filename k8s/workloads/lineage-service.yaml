@@ -22,13 +22,16 @@ data:
 
             if path_parts == ["lineage", "all"]:
                 self.handle_all_traces(output_format)
-            elif len(path_parts) >= 2 and path_parts[0] == "lineage":
+            elif len(path_parts) == 3 and path_parts[0] == "lineage" and path_parts[2] == "trust":
+                run_id = urllib.parse.unquote(path_parts[1])
+                self.handle_trust_lineage(run_id, output_format)
+            elif len(path_parts) == 2 and path_parts[0] == "lineage":
                 run_id = urllib.parse.unquote(path_parts[1])
                 self.handle_lineage(run_id, output_format)
             elif parsed.path == "/health":
                 self.send_json({"status": "ok"})
             else:
-                self.send_json({"error": "Use /lineage/all or /lineage/{run_id}?format=json|text"}, 400)
+                self.send_json({"error": "Use /lineage/all, /lineage/{run_id} (debug), or /lineage/{run_id}/trust (clean)"}, 400)
 
         def handle_all_traces(self, output_format):
             """List all available trace IDs from Jaeger (envoy-ingress only)."""
@@ -117,6 +120,148 @@ data:
                 self.send_json({"error": f"Jaeger error: {e.code}"}, 500)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
+
+        def handle_trust_lineage(self, run_id, output_format):
+            """Handle /lineage/{run_id}/trust - deduplicated trust graph view."""
+            try:
+                tags_json = json.dumps({"trust.run_id": run_id})
+                encoded_tags = urllib.parse.quote(tags_json)
+                search_url = f"{JAEGER_URL}/api/traces?service=envoy-ingress&tags={encoded_tags}&limit=100"
+                req = urllib.request.Request(search_url)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    trace_data = json.loads(resp.read().decode())
+
+                lineage = self.build_trust_lineage(trace_data, run_id)
+
+                if output_format == "text":
+                    self.send_text(self.format_trust_lineage_text(lineage))
+                else:
+                    self.send_json(lineage)
+
+            except urllib.error.HTTPError as e:
+                self.send_json({"error": f"Jaeger error: {e.code}"}, 500)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
+        def build_trust_lineage(self, trace_data, run_id):
+            """Build deduplicated trust lineage - one hop per unique source->target pair."""
+            if not trace_data.get("data") or len(trace_data["data"]) == 0:
+                return {"error": f"No traces found for run_id: {run_id}"}
+
+            # Collect all spans
+            all_spans = []
+            all_processes = {}
+            for trace in trace_data["data"]:
+                spans = trace.get("spans", [])
+                processes = trace.get("processes", {})
+                all_processes.update(processes)
+                for span in spans:
+                    all_spans.append(span)
+
+            # Extract trust hops and deduplicate by (source, target) pair
+            # Prefer "inbound" operations over "outbound" for cleaner view
+            hop_map = {}  # key: (source, target) -> hop data
+            for span in all_spans:
+                tags = {t["key"]: t["value"] for t in span.get("tags", [])}
+                trust_tags = {k: v for k, v in tags.items() if k.startswith("trust.")}
+
+                if not trust_tags:
+                    continue
+
+                source = trust_tags.get("trust.source", "unknown")
+                target = trust_tags.get("trust.target", "unknown")
+                hop_kind = trust_tags.get("trust.hop_kind", "unknown")
+                operation = span["operationName"]
+
+                # Skip if target is unknown (outbound spans sometimes lack target)
+                if target == "unknown":
+                    continue
+
+                hop_key = (source, target)
+
+                # Prefer inbound spans (they have accurate target info)
+                is_inbound = operation.startswith("inbound:")
+                existing = hop_map.get(hop_key)
+
+                if existing is None or (is_inbound and not existing.get("_is_inbound")):
+                    hop_map[hop_key] = {
+                        "source": source,
+                        "target": target,
+                        "hop_kind": hop_kind,
+                        "operation": operation,
+                        "start_time": span["startTime"],
+                        "duration_us": span["duration"],
+                        "_is_inbound": is_inbound,
+                    }
+
+            # Convert to list and sort by start time
+            hops = list(hop_map.values())
+            hops.sort(key=lambda h: h["start_time"])
+
+            # Build result
+            agents = set()
+            resources = set()
+            for hop in hops:
+                if hop["target"].startswith("agent:"):
+                    agents.add(hop["target"])
+                elif hop["target"].startswith("resource:"):
+                    resources.add(hop["target"])
+                if hop["source"].startswith("agent:"):
+                    agents.add(hop["source"])
+
+            lineage = {
+                "run_id": run_id,
+                "principal": hops[0]["source"] if hops else "unknown",
+                "total_hops": len(hops),
+                "agents_involved": sorted(list(agents)),
+                "resources_accessed": sorted(list(resources)),
+                "trust_chain": [],
+            }
+
+            for i, hop in enumerate(hops):
+                lineage["trust_chain"].append({
+                    "step": i + 1,
+                    "hop_kind": hop["hop_kind"],
+                    "source": hop["source"],
+                    "target": hop["target"],
+                    "duration_us": hop["duration_us"],
+                })
+
+            return lineage
+
+        def format_trust_lineage_text(self, lineage):
+            """Format deduplicated trust lineage as text."""
+            if "error" in lineage:
+                return f"Error: {lineage['error']}"
+
+            lines = [
+                "=" * 60,
+                "TRUST GRAPH (deduplicated)",
+                "=" * 60,
+                f"Run ID:    {lineage['run_id']}",
+                f"Principal: {lineage['principal']}",
+                f"Total Hops: {lineage['total_hops']}",
+                "",
+                "AGENTS INVOLVED:",
+            ]
+            for agent in lineage["agents_involved"]:
+                lines.append(f"  - {agent}")
+
+            lines.append("")
+            lines.append("RESOURCES ACCESSED:")
+            for resource in lineage["resources_accessed"]:
+                lines.append(f"  - {resource}")
+
+            lines.append("")
+            lines.append("TRUST CHAIN:")
+            lines.append("-" * 60)
+
+            for step in lineage["trust_chain"]:
+                lines.append(f"{step['step']}. [{step['hop_kind']}] {step['source']} -> {step['target']}")
+
+            lines.append("")
+            lines.append("=" * 60)
+            return "\n".join(lines)
 
         def build_lineage_from_multiple_traces(self, trace_data, run_id):
             """Extract trust lineage from multiple Jaeger traces sharing the same run_id."""

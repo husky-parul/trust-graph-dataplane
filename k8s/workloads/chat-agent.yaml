@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chat-agent-config
+  namespace: workloads
+data:
+  server.py: |
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import json
+    import urllib.request
+    import os
+
+    # Route through local Envoy sidecar outbound port
+    SIDECAR_URL = os.environ.get("SIDECAR_URL", "http://127.0.0.1:15002")
+
+    class Handler(BaseHTTPRequestHandler):
+        def route_prompt(self, prompt):
+            """Determine which agents to call based on keywords."""
+            prompt_lower = prompt.lower()
+            agents_to_call = []
+
+            if any(kw in prompt_lower for kw in ["sales", "revenue", "deal", "sold"]):
+                agents_to_call.append(("sales-agent", "/sales/all"))
+            if any(kw in prompt_lower for kw in ["employee", "read", "list", "who", "staff"]):
+                agents_to_call.append(("read-agent", "/read/employees"))
+            if any(kw in prompt_lower for kw in ["summary", "salary", "average", "total", "payroll"]):
+                agents_to_call.append(("summary-agent", "/summary/salaries"))
+
+            return agents_to_call
+
+        def do_POST(self):
+            principal_id = self.headers.get('x-principal-id', 'unknown')
+            request_id = self.headers.get('x-request-id', '')
+
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode()
+
+            print(f"[chat-agent] Request: {self.path}, principal: {principal_id}")
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+
+            if self.path == "/chat":
+                try:
+                    request_data = json.loads(body)
+                    prompt = request_data.get("prompt", "")
+
+                    agents_to_call = self.route_prompt(prompt)
+                    results = []
+
+                    for agent_name, endpoint in agents_to_call:
+                        try:
+                            headers = {
+                                'x-principal-id': principal_id,
+                                'x-request-id': request_id,
+                                'Host': f'{agent_name}.workloads.svc.cluster.local',
+                            }
+                            req = urllib.request.Request(f"{SIDECAR_URL}{endpoint}", headers=headers)
+                            with urllib.request.urlopen(req, timeout=10) as resp:
+                                data = json.loads(resp.read().decode())
+                                results.append({"agent": agent_name, "data": data})
+                        except Exception as e:
+                            results.append({"agent": agent_name, "error": str(e)})
+
+                    response = {
+                        "agent": "chat-agent",
+                        "action": "route_and_aggregate",
+                        "principal": principal_id,
+                        "prompt": prompt,
+                        "agents_called": [a[0] for a in agents_to_call],
+                        "results": results
+                    }
+
+                    if not agents_to_call:
+                        response["message"] = "No matching agents found. Try keywords: sales, employee, summary, salary"
+
+                    self.wfile.write(json.dumps(response).encode())
+                except Exception as e:
+                    self.wfile.write(json.dumps({"error": str(e)}).encode())
+            else:
+                self.wfile.write(json.dumps({"error": "Use POST /chat"}).encode())
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "service": "chat-agent",
+                "usage": "POST /chat with JSON body: {\"prompt\": \"your query here\"}",
+                "keywords": {
+                    "sales-agent": ["sales", "revenue", "deal", "sold"],
+                    "read-agent": ["employee", "read", "list", "who", "staff"],
+                    "summary-agent": ["summary", "salary", "average", "total", "payroll"]
+                }
+            }).encode())
+
+    HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-agent
+  namespace: workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chat-agent
+  template:
+    metadata:
+      labels:
+        app: chat-agent
+    spec:
+      containers:
+        - name: chat-agent
+          image: python:3.11-slim
+          command: ["python", "/app/server.py"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /app
+        - name: envoy-sidecar
+          image: envoyproxy/envoy:v1.28-latest
+          args: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "chat-agent"]
+          ports:
+            - containerPort: 15001
+              name: inbound
+            - containerPort: 15002
+              name: outbound
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+      volumes:
+        - name: config
+          configMap:
+            name: chat-agent-config
+        - name: envoy-config
+          configMap:
+            name: envoy-sidecar-chat-agent
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-agent
+  namespace: workloads
+spec:
+  selector:
+    app: chat-agent
+  ports:
+    - port: 8080
+      targetPort: 15001
+      name: http
+    - port: 15001
+      targetPort: 15001
+      name: sidecar

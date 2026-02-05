@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: summary-agent-config
+  name: sales-agent-config
   namespace: workloads
 data:
   server.py: |
@@ -11,70 +11,81 @@ data:
     import os
 
     # Route through local Envoy sidecar outbound port
-    READ_AGENT_URL = os.environ.get("READ_AGENT_URL", "http://127.0.0.1:15002")
+    DATABASE_URL = os.environ.get("DATABASE_URL", "http://127.0.0.1:15002")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             principal_id = self.headers.get('x-principal-id', 'unknown')
             request_id = self.headers.get('x-request-id', '')
 
-            print(f"[summary-agent] Request: {self.path}, principal: {principal_id}")
+            print(f"[sales-agent] Request: {self.path}, principal: {principal_id}")
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
 
-            if self.path == "/summary/salaries":
+            if self.path == "/sales/all":
                 try:
-                    # Propagate headers through sidecar
                     headers = {
                         'x-principal-id': principal_id,
                         'x-request-id': request_id,
-                        'Host': 'read-agent.workloads.svc.cluster.local',
+                        'Host': 'mock-database.workloads.svc.cluster.local',
                     }
-                    req = urllib.request.Request(f"{READ_AGENT_URL}/read/employees", headers=headers)
+                    req = urllib.request.Request(f"{DATABASE_URL}/sales", headers=headers)
                     with urllib.request.urlopen(req) as resp:
                         data = json.loads(resp.read().decode())
-                        employees = data.get("data", {}).get("employees", [])
-
-                        total_salary = sum(e["salary"] for e in employees)
-                        avg_salary = total_salary / len(employees) if employees else 0
-
                         result = {
-                            "agent": "summary-agent",
-                            "action": "summarize_salaries",
+                            "agent": "sales-agent",
+                            "action": "get_all_sales",
                             "principal": principal_id,
-                            "summary": {
-                                "total_employees": len(employees),
-                                "total_salary": total_salary,
-                                "average_salary": avg_salary,
-                            }
+                            "data": data
+                        }
+                        self.wfile.write(json.dumps(result).encode())
+                except Exception as e:
+                    self.wfile.write(json.dumps({"error": str(e)}).encode())
+            elif self.path.startswith("/sales/employee/"):
+                try:
+                    emp_id = self.path.split("/")[-1]
+                    headers = {
+                        'x-principal-id': principal_id,
+                        'x-request-id': request_id,
+                        'Host': 'mock-database.workloads.svc.cluster.local',
+                    }
+                    req = urllib.request.Request(f"{DATABASE_URL}/sales/employee/{emp_id}", headers=headers)
+                    with urllib.request.urlopen(req) as resp:
+                        data = json.loads(resp.read().decode())
+                        result = {
+                            "agent": "sales-agent",
+                            "action": "get_employee_sales",
+                            "principal": principal_id,
+                            "employee_id": emp_id,
+                            "data": data
                         }
                         self.wfile.write(json.dumps(result).encode())
                 except Exception as e:
                     self.wfile.write(json.dumps({"error": str(e)}).encode())
             else:
-                self.wfile.write(json.dumps({"status": "ok", "service": "summary-agent"}).encode())
+                self.wfile.write(json.dumps({"status": "ok", "service": "sales-agent"}).encode())
 
     HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: summary-agent
+  name: sales-agent
   namespace: workloads
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: summary-agent
+      app: sales-agent
   template:
     metadata:
       labels:
-        app: summary-agent
+        app: sales-agent
     spec:
       containers:
-        - name: summary-agent
+        - name: sales-agent
           image: python:3.11-slim
           command: ["python", "/app/server.py"]
           ports:
@@ -84,7 +95,7 @@ spec:
               mountPath: /app
         - name: envoy-sidecar
           image: envoyproxy/envoy:v1.28-latest
-          args: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "summary-agent"]
+          args: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "sales-agent"]
           ports:
             - containerPort: 15001
               name: inbound
@@ -96,19 +107,19 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: summary-agent-config
+            name: sales-agent-config
         - name: envoy-config
           configMap:
-            name: envoy-sidecar-summary-agent
+            name: envoy-sidecar-sales-agent
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: summary-agent
+  name: sales-agent
   namespace: workloads
 spec:
   selector:
-    app: summary-agent
+    app: sales-agent
   ports:
     - port: 8080
       targetPort: 15001

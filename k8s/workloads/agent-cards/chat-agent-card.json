@@ -1,0 +1,56 @@
+{
+  "name": "chat-agent",
+  "version": "1.0.0",
+  "description": "Router/orchestrator agent that routes prompts to appropriate agents based on keywords",
+  "capabilities": [
+    "route_prompts",
+    "aggregate_results",
+    "multi_agent_orchestration"
+  ],
+  "endpoints": {
+    "base_url": "http://chat-agent.workloads.svc.cluster.local:8080",
+    "operations": {
+      "chat": {
+        "method": "POST",
+        "path": "/chat",
+        "description": "Receives a prompt and routes to appropriate agent(s)",
+        "request_body": {
+          "type": "application/json",
+          "schema": {
+            "prompt": "string - the user's query"
+          }
+        }
+      },
+      "health": {
+        "method": "GET",
+        "path": "/",
+        "description": "Health check endpoint with usage info"
+      }
+    }
+  },
+  "routing_rules": {
+    "sales": {
+      "keywords": ["sales", "revenue", "deal", "sold"],
+      "routes_to": "sales-agent",
+      "endpoint": "/sales/all"
+    },
+    "employees": {
+      "keywords": ["employee", "read", "list", "who", "staff"],
+      "routes_to": "read-agent",
+      "endpoint": "/read/employees"
+    },
+    "summary": {
+      "keywords": ["summary", "salary", "average", "total", "payroll"],
+      "routes_to": "summary-agent",
+      "endpoint": "/summary/salaries"
+    }
+  },
+  "dependencies": {
+    "downstream": ["read-agent", "summary-agent", "sales-agent"]
+  },
+  "trust_metadata": {
+    "agent_id": "agent:chat-agent",
+    "hop_kinds_supported": ["principal_to_agent"],
+    "agents_called": ["agent:read-agent", "agent:summary-agent", "agent:sales-agent"]
+  }
+}

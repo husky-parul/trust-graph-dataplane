@@ -1,0 +1,37 @@
+{
+  "name": "sales-agent",
+  "version": "1.0.0",
+  "description": "Queries sales data from the mock database",
+  "capabilities": [
+    "get_all_sales",
+    "get_employee_sales"
+  ],
+  "endpoints": {
+    "base_url": "http://sales-agent.workloads.svc.cluster.local:8080",
+    "operations": {
+      "get_all_sales": {
+        "method": "GET",
+        "path": "/sales/all",
+        "description": "Returns all sales records"
+      },
+      "get_employee_sales": {
+        "method": "GET",
+        "path": "/sales/employee/{employee_id}",
+        "description": "Returns sales for a specific employee"
+      },
+      "health": {
+        "method": "GET",
+        "path": "/",
+        "description": "Health check endpoint"
+      }
+    }
+  },
+  "dependencies": {
+    "downstream": ["mock-database"]
+  },
+  "trust_metadata": {
+    "agent_id": "agent:sales-agent",
+    "hop_kinds_supported": ["principal_to_agent", "agent_to_agent"],
+    "resources_accessed": ["resource:mock-database"]
+  }
+}
