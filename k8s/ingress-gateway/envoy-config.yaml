@@ -23,17 +23,22 @@ data:
                       custom_tags:
                         - tag: trust.principal_id
                           request_header:
-                            name: x-principal-id
-                            default_value: anonymous
-                        - tag: trust.agent_id
+                            name: x-trust-principal-id
+                            default_value: "user:anonymous"
+                        - tag: trust.run_id
+                          request_header:
+                            name: x-request-id
+                        - tag: trust.hop_kind
                           literal:
-                            value: ingress-gateway
-                        - tag: trust.hop
-                          literal:
-                            value: "1"
-                        - tag: trust.entry_point
-                          literal:
-                            value: envoy-ingress
+                            value: "principal_to_agent"
+                        - tag: trust.source
+                          request_header:
+                            name: x-trust-principal-id
+                            default_value: "user:anonymous"
+                        - tag: trust.target
+                          request_header:
+                            name: x-trust-target
+                            default_value: "unknown"
                       provider:
                         name: envoy.tracers.zipkin
                         typed_config:
@@ -47,6 +52,20 @@ data:
                         - name: backend
                           domains: ["*"]
                           routes:
+                            # Lineage service - query trust graph
+                            - match:
+                                prefix: "/lineage"
+                              route:
+                                cluster: lineage_service
+                              decorator:
+                                operation: "lineage-query"
+                            # Route for claude user -> summary-agent experiment
+                            - match:
+                                prefix: "/summary"
+                              route:
+                                cluster: summary_agent_service
+                              decorator:
+                                operation: "ingress:summary-agent"
                             # Route to caller-agent for multi-hop demos
                             - match:
                                 prefix: "/caller"
@@ -119,13 +138,25 @@ data:
                                 if principal == nil then
                                   principal = "anonymous"
                                 end
-                                -- Set trust context headers
-                                request_handle:headers():add("x-trust-principal", principal)
-                                request_handle:headers():add("x-trust-chain", "principal:" .. principal .. " -> ingress-gateway")
+                                -- Format principal ID with user: prefix
+                                local trust_principal = "user:" .. principal
+                                request_handle:headers():add("x-trust-principal-id", trust_principal)
 
-                                -- Add dynamic metadata for tracing
-                                request_handle:streamInfo():dynamicMetadata():set("trust", "principal_id", principal)
-                                request_handle:streamInfo():dynamicMetadata():set("trust", "agent_id", "ingress-gateway")
+                                -- Set caller type for downstream sidecars
+                                request_handle:headers():add("x-caller-type", "principal")
+                                request_handle:headers():add("x-caller-id", trust_principal)
+
+                                -- Determine target based on path
+                                local path = request_handle:headers():get(":path") or "/"
+                                local target = "unknown"
+                                if string.find(path, "/summary") then
+                                  target = "agent:summary-agent"
+                                elseif string.find(path, "/caller") then
+                                  target = "agent:caller-agent"
+                                elseif string.find(path, "/agent") then
+                                  target = "agent:agent"
+                                end
+                                request_handle:headers():add("x-trust-target", target)
                               end
                       - name: envoy.filters.http.router
                         typed_config:
@@ -157,6 +188,32 @@ data:
                         socket_address:
                           address: caller-agent.workloads.svc.cluster.local
                           port_value: 80
+
+        - name: summary_agent_service
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: summary_agent_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: summary-agent.workloads.svc.cluster.local
+                          port_value: 8080
+
+        - name: lineage_service
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: lineage_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: lineage-service.workloads.svc.cluster.local
+                          port_value: 8080
 
         - name: otel_collector
           type: STRICT_DNS

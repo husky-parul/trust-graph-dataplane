@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: read-agent-config
+  namespace: workloads
+data:
+  server.py: |
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import json
+    import urllib.request
+    import os
+
+    # Route through local Envoy sidecar outbound port
+    DATABASE_URL = os.environ.get("DATABASE_URL", "http://127.0.0.1:15002")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            principal_id = self.headers.get('x-principal-id', 'unknown')
+            request_id = self.headers.get('x-request-id', '')
+
+            print(f"[read-agent] Request: {self.path}, principal: {principal_id}")
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+
+            if self.path == "/read/employees":
+                try:
+                    # Propagate headers through sidecar
+                    headers = {
+                        'x-principal-id': principal_id,
+                        'x-request-id': request_id,
+                        'Host': 'mock-database.workloads.svc.cluster.local',
+                    }
+                    req = urllib.request.Request(f"{DATABASE_URL}/employees", headers=headers)
+                    with urllib.request.urlopen(req) as resp:
+                        data = json.loads(resp.read().decode())
+                        result = {
+                            "agent": "read-agent",
+                            "action": "read_employees",
+                            "principal": principal_id,
+                            "data": data
+                        }
+                        self.wfile.write(json.dumps(result).encode())
+                except Exception as e:
+                    self.wfile.write(json.dumps({"error": str(e)}).encode())
+            else:
+                self.wfile.write(json.dumps({"status": "ok", "service": "read-agent"}).encode())
+
+    HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: read-agent
+  namespace: workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: read-agent
+  template:
+    metadata:
+      labels:
+        app: read-agent
+    spec:
+      containers:
+        - name: read-agent
+          image: python:3.11-slim
+          command: ["python", "/app/server.py"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /app
+        - name: envoy-sidecar
+          image: envoyproxy/envoy:v1.28-latest
+          args: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "read-agent"]
+          ports:
+            - containerPort: 15001
+              name: inbound
+            - containerPort: 15002
+              name: outbound
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+      volumes:
+        - name: config
+          configMap:
+            name: read-agent-config
+        - name: envoy-config
+          configMap:
+            name: envoy-sidecar-read-agent
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: read-agent
+  namespace: workloads
+spec:
+  selector:
+    app: read-agent
+  ports:
+    - port: 8080
+      targetPort: 15001
+      name: http
+    - port: 15001
+      targetPort: 15001
+      name: sidecar

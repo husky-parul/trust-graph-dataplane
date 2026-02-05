@@ -23,7 +23,7 @@ data:
             if path_parts == ["lineage", "all"]:
                 self.handle_all_traces(output_format)
             elif len(path_parts) >= 2 and path_parts[0] == "lineage":
-                run_id = path_parts[1]
+                run_id = urllib.parse.unquote(path_parts[1])
                 self.handle_lineage(run_id, output_format)
             elif parsed.path == "/health":
                 self.send_json({"status": "ok"})
