@@ -1,0 +1,86 @@
+{
+  "question": "Why was resource:mock-database accessed?",
+  "target": "resource:mock-database",
+  "target_type": "resource",
+  "run_id": "f96d7278-1d3b-930c-b116-90dce262cefb",
+  "principal": "user:claude",
+  "direct_accessors": [
+    "agent:read-agent",
+    "agent:sales-agent"
+  ],
+  "access_chains": [
+    {
+      "accessor": "agent:sales-agent",
+      "hop_kind": "agent_to_resource",
+      "call_count": 1,
+      "first_ts": 1770330147368508,
+      "last_ts": 1770330147368508,
+      "duration_us": 3135,
+      "delegated_by": [
+        {
+          "actor": "agent:chat-agent",
+          "hop_kind": "agent_to_agent",
+          "first_ts": 1770330147363436
+        },
+        {
+          "actor": "user:claude",
+          "hop_kind": "principal_to_agent",
+          "first_ts": 1770330147347218
+        }
+      ]
+    },
+    {
+      "accessor": "agent:read-agent",
+      "hop_kind": "agent_to_resource",
+      "call_count": 2,
+      "first_ts": 1770330147380626,
+      "last_ts": 1770330147393508,
+      "duration_us": 4196,
+      "delegated_by": [
+        {
+          "actor": "agent:summary-agent",
+          "hop_kind": "agent_to_agent",
+          "first_ts": 1770330147390463
+        },
+        {
+          "actor": "agent:chat-agent",
+          "hop_kind": "agent_to_agent",
+          "first_ts": 1770330147385792
+        },
+        {
+          "actor": "user:claude",
+          "hop_kind": "principal_to_agent",
+          "first_ts": 1770330147347218
+        }
+      ]
+    }
+  ],
+  "parallel_groups": [
+    [
+      "agent:sales-agent",
+      "agent:read-agent"
+    ]
+  ],
+  "all_paths_to_principal": [
+    [
+      "user:claude",
+      "agent:chat-agent",
+      "agent:summary-agent",
+      "agent:read-agent",
+      "resource:mock-database"
+    ],
+    [
+      "user:claude",
+      "agent:chat-agent",
+      "agent:read-agent",
+      "resource:mock-database"
+    ],
+    [
+      "user:claude",
+      "agent:chat-agent",
+      "agent:sales-agent",
+      "resource:mock-database"
+    ]
+  ],
+  "answer": "resource:mock-database was accessed because:\n  [PARALLEL] agent:sales-agent, agent:read-agent ran concurrently\n\n  1. agent:sales-agent accessed it\n     delegation: user:claude -> agent:chat-agent -> agent:sales-agent\n  2. agent:read-agent accessed it (2x)\n     delegation: user:claude -> agent:chat-agent -> agent:summary-agent -> agent:read-agent\n\n  Temporal order: agent:sales-agent was first, agent:read-agent was last"
+}
