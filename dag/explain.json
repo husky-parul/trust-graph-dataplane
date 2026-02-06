@@ -2,7 +2,7 @@
   "question": "Why was resource:mock-database accessed?",
   "target": "resource:mock-database",
   "target_type": "resource",
-  "run_id": "f96d7278-1d3b-930c-b116-90dce262cefb",
+  "run_id": "cda57f6c-8d06-9cd6-a9c1-96f6d540cd01",
   "principal": "user:claude",
   "direct_accessors": [
     "agent:read-agent",
@@ -12,10 +12,13 @@
     {
       "accessor": "agent:sales-agent",
       "hop_kind": "agent_to_resource",
-      "call_count": 1,
-      "first_ts": 1770330147368508,
-      "last_ts": 1770330147368508,
-      "duration_us": 3135,
+      "span_count": 1,
+      "span_ids": [
+        "7e59e0c13ee01236"
+      ],
+      "first_ts": 1770367971881438,
+      "last_ts": 1770367971881438,
+      "total_duration_us": 2473,
       "full_path": [
         "user:claude",
         "agent:chat-agent",
@@ -26,22 +29,54 @@
         {
           "actor": "agent:chat-agent",
           "hop_kind": "agent_to_agent",
-          "first_ts": 1770330147363436
+          "first_ts": 1770367971875802
         },
         {
           "actor": "user:claude",
           "hop_kind": "principal_to_agent",
-          "first_ts": 1770330147347218
+          "first_ts": 1770367971827620
         }
       ]
     },
     {
       "accessor": "agent:read-agent",
       "hop_kind": "agent_to_resource",
-      "call_count": 2,
-      "first_ts": 1770330147380626,
-      "last_ts": 1770330147393508,
-      "duration_us": 4196,
+      "span_count": 1,
+      "span_ids": [
+        "1a0df9b23708b99b"
+      ],
+      "first_ts": 1770367971897198,
+      "last_ts": 1770367971897198,
+      "total_duration_us": 1988,
+      "full_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:read-agent",
+        "resource:mock-database"
+      ],
+      "delegated_by": [
+        {
+          "actor": "agent:chat-agent",
+          "hop_kind": "agent_to_agent",
+          "first_ts": 1770367971892336
+        },
+        {
+          "actor": "user:claude",
+          "hop_kind": "principal_to_agent",
+          "first_ts": 1770367971827620
+        }
+      ]
+    },
+    {
+      "accessor": "agent:read-agent",
+      "hop_kind": "agent_to_resource",
+      "span_count": 1,
+      "span_ids": [
+        "825262933c0d4003"
+      ],
+      "first_ts": 1770367971911385,
+      "last_ts": 1770367971911385,
+      "total_duration_us": 3530,
       "full_path": [
         "user:claude",
         "agent:chat-agent",
@@ -53,54 +88,61 @@
         {
           "actor": "agent:summary-agent",
           "hop_kind": "agent_to_agent",
-          "first_ts": 1770330147390463
+          "first_ts": 1770367971908838
         },
         {
           "actor": "agent:chat-agent",
           "hop_kind": "agent_to_agent",
-          "first_ts": 1770330147385792
+          "first_ts": 1770367971904155
         },
         {
           "actor": "user:claude",
           "hop_kind": "principal_to_agent",
-          "first_ts": 1770330147347218
-        }
-      ]
-    },
-    {
-      "accessor": "agent:read-agent",
-      "hop_kind": "agent_to_resource",
-      "call_count": 2,
-      "first_ts": 1770330147380626,
-      "last_ts": 1770330147393508,
-      "duration_us": 4196,
-      "full_path": [
-        "user:claude",
-        "agent:chat-agent",
-        "agent:read-agent",
-        "resource:mock-database"
-      ],
-      "delegated_by": [
-        {
-          "actor": "agent:chat-agent",
-          "hop_kind": "agent_to_agent",
-          "first_ts": 1770330147374953
-        },
-        {
-          "actor": "user:claude",
-          "hop_kind": "principal_to_agent",
-          "first_ts": 1770330147347218
+          "first_ts": 1770367971827620
         }
       ]
     }
   ],
   "parallel_groups": [
-    [
-      "agent:sales-agent",
-      "agent:read-agent",
-      "agent:read-agent"
-    ]
+    {
+      "cause_indices": [
+        0,
+        1,
+        2
+      ],
+      "accessors": [
+        "agent:sales-agent",
+        "agent:read-agent",
+        "agent:read-agent"
+      ],
+      "paths": [
+        [
+          "user:claude",
+          "agent:chat-agent",
+          "agent:sales-agent",
+          "resource:mock-database"
+        ],
+        [
+          "user:claude",
+          "agent:chat-agent",
+          "agent:read-agent",
+          "resource:mock-database"
+        ],
+        [
+          "user:claude",
+          "agent:chat-agent",
+          "agent:summary-agent",
+          "agent:read-agent",
+          "resource:mock-database"
+        ]
+      ]
+    }
   ],
   "delegation_order": "closest-first (immediate caller first, principal last)",
-  "answer": "resource:mock-database was accessed because:\n  [PARALLEL] agent:sales-agent, agent:read-agent, agent:read-agent ran concurrently\n\n  1. user:claude -> agent:chat-agent -> agent:sales-agent -> resource:mock-database\n  2. agent:read-agent accessed it via 2 distinct paths:\n       2.1. user:claude -> agent:chat-agent -> agent:summary-agent -> agent:read-agent -> resource:mock-database\n       2.2. user:claude -> agent:chat-agent -> agent:read-agent -> resource:mock-database\n\n  Temporal: path user:claude -> agent:chat-agent -> agent:sales-agent... started first"
+  "field_descriptions": {
+    "span_count": "Number of individual spans attributed to this specific path (per-span tracking)",
+    "span_ids": "Actual span IDs for the access events on this path",
+    "total_duration_us": "Sum of span durations attributed to this path (microseconds)"
+  },
+  "answer": "resource:mock-database was accessed because:\n  [PARALLEL] agent:sales-agent, agent:read-agent, agent:read-agent ran concurrently\n\n  1. user:claude -> agent:chat-agent -> agent:sales-agent -> resource:mock-database\n  2. agent:read-agent accessed it via 2 distinct paths:\n       2.1. user:claude -> agent:chat-agent -> agent:read-agent -> resource:mock-database\n       2.2. user:claude -> agent:chat-agent -> agent:summary-agent -> agent:read-agent -> resource:mock-database\n\n  Temporal: path user:claude -> agent:chat-agent -> agent:sales-agent... started first"
 }

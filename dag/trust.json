@@ -1,0 +1,122 @@
+{
+  "run_id": "cda57f6c-8d06-9cd6-a9c1-96f6d540cd01",
+  "type": "topologically_ordered_event_list",
+  "description": "All causal hops in temporal order. Duplicate edges from different delegation paths appear separately.",
+  "principal": "user:claude",
+  "total_events": 8,
+  "agents_involved": [
+    "agent:chat-agent",
+    "agent:read-agent",
+    "agent:sales-agent",
+    "agent:summary-agent"
+  ],
+  "resources_accessed": [
+    "resource:mock-database"
+  ],
+  "field_descriptions": {
+    "span_duration_us": "Duration of this individual span (not aggregated)",
+    "causal_path": "Full delegation chain from principal to this hop's target"
+  },
+  "trust_chain": [
+    {
+      "step": 1,
+      "hop_kind": "principal_to_agent",
+      "source": "user:claude",
+      "target": "agent:chat-agent",
+      "span_duration_us": 63778,
+      "causal_path": [
+        "user:claude",
+        "agent:chat-agent"
+      ]
+    },
+    {
+      "step": 2,
+      "hop_kind": "agent_to_agent",
+      "source": "agent:chat-agent",
+      "target": "agent:sales-agent",
+      "span_duration_us": 13230,
+      "causal_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:sales-agent"
+      ]
+    },
+    {
+      "step": 3,
+      "hop_kind": "agent_to_resource",
+      "source": "agent:sales-agent",
+      "target": "resource:mock-database",
+      "span_duration_us": 2473,
+      "causal_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:sales-agent",
+        "resource:mock-database"
+      ]
+    },
+    {
+      "step": 4,
+      "hop_kind": "agent_to_agent",
+      "source": "agent:chat-agent",
+      "target": "agent:read-agent",
+      "span_duration_us": 8690,
+      "causal_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:read-agent"
+      ]
+    },
+    {
+      "step": 5,
+      "hop_kind": "agent_to_resource",
+      "source": "agent:read-agent",
+      "target": "resource:mock-database",
+      "span_duration_us": 1988,
+      "causal_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:read-agent",
+        "resource:mock-database"
+      ]
+    },
+    {
+      "step": 6,
+      "hop_kind": "agent_to_agent",
+      "source": "agent:chat-agent",
+      "target": "agent:summary-agent",
+      "span_duration_us": 16433,
+      "causal_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:summary-agent"
+      ]
+    },
+    {
+      "step": 7,
+      "hop_kind": "agent_to_agent",
+      "source": "agent:summary-agent",
+      "target": "agent:read-agent",
+      "span_duration_us": 6995,
+      "causal_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:summary-agent",
+        "agent:read-agent"
+      ]
+    },
+    {
+      "step": 8,
+      "hop_kind": "agent_to_resource",
+      "source": "agent:read-agent",
+      "target": "resource:mock-database",
+      "span_duration_us": 3530,
+      "causal_path": [
+        "user:claude",
+        "agent:chat-agent",
+        "agent:summary-agent",
+        "agent:read-agent",
+        "resource:mock-database"
+      ]
+    }
+  ]
+}
