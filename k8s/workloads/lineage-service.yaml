@@ -10,8 +10,785 @@ data:
     import urllib.request
     import urllib.parse
     import os
+    import sqlite3
+    import hashlib
+    import time
+
+    import glob
 
     JAEGER_URL = os.environ.get("JAEGER_URL", "http://jaeger.observability.svc.cluster.local:16686")
+    DB_PATH = os.environ.get("DB_PATH", "/data/lineage.db")
+    AGENT_CARDS_DIR = os.environ.get("AGENT_CARDS_DIR", "/agent-cards")
+
+    def init_db():
+        """Initialize SQLite database with schema. Safe to call multiple times."""
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        c = conn.cursor()
+
+        c.execute("""CREATE TABLE IF NOT EXISTS runs (
+            run_id          TEXT PRIMARY KEY,
+            principal_id    TEXT,
+            started_at      INTEGER,
+            ended_at        INTEGER,
+            ingested_at     INTEGER,
+            sealed          INTEGER DEFAULT 1,
+            schema_version  INTEGER DEFAULT 1,
+            content_hash    TEXT,
+            node_count      INTEGER,
+            edge_count      INTEGER,
+            resource_count  INTEGER
+        )""")
+
+        c.execute("""CREATE TABLE IF NOT EXISTS nodes (
+            run_id   TEXT,
+            node_id  TEXT,
+            type     TEXT,
+            label    TEXT,
+            PRIMARY KEY(run_id, node_id)
+        )""")
+
+        c.execute("""CREATE TABLE IF NOT EXISTS edges (
+            run_id            TEXT,
+            source            TEXT,
+            target            TEXT,
+            hop_kind          TEXT,
+            logical_count     INTEGER,
+            raw_count         INTEGER,
+            first_ts          INTEGER,
+            last_ts           INTEGER,
+            total_duration_us INTEGER,
+            PRIMARY KEY(run_id, source, target, hop_kind)
+        )""")
+
+        c.execute("""CREATE TABLE IF NOT EXISTS edge_spans (
+            run_id   TEXT,
+            source   TEXT,
+            target   TEXT,
+            hop_kind TEXT,
+            span_id  TEXT,
+            PRIMARY KEY(run_id, source, target, hop_kind, span_id)
+        )""")
+
+        c.execute("""CREATE TABLE IF NOT EXISTS paths (
+            run_id      TEXT,
+            target_node TEXT,
+            full_path   TEXT,
+            accessor    TEXT,
+            hop_kind    TEXT,
+            span_count  INTEGER,
+            PRIMARY KEY(run_id, full_path)
+        )""")
+
+        c.execute("""CREATE TABLE IF NOT EXISTS agent_cards (
+            agent_id        TEXT PRIMARY KEY,
+            name            TEXT,
+            version         TEXT,
+            capabilities    TEXT,
+            endpoints       TEXT,
+            dependencies    TEXT,
+            trust_metadata  TEXT,
+            registered_at   INTEGER,
+            source          TEXT
+        )""")
+
+        conn.commit()
+        conn.close()
+        print(f"[lineage-service] SQLite initialized at {DB_PATH}")
+
+    def load_agent_cards_from_dir():
+        """Scan AGENT_CARDS_DIR for JSON files and upsert into agent_cards table."""
+        card_dir = AGENT_CARDS_DIR
+        if not os.path.isdir(card_dir):
+            print(f"[lineage-service] Agent cards directory not found: {card_dir}")
+            return 0
+
+        card_files = glob.glob(os.path.join(card_dir, "*.json"))
+        if not card_files:
+            print(f"[lineage-service] No agent card files found in {card_dir}")
+            return 0
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("PRAGMA journal_mode=WAL")
+        count = 0
+        for filepath in card_files:
+            try:
+                with open(filepath) as f:
+                    card = json.load(f)
+                agent_id = card.get("agent_id")
+                if not agent_id:
+                    print(f"[lineage-service] Skipping {filepath}: no agent_id field")
+                    continue
+                conn.execute("""INSERT OR REPLACE INTO agent_cards
+                    (agent_id, name, version, capabilities, endpoints, dependencies,
+                     trust_metadata, registered_at, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (agent_id, card.get("name", ""),
+                     card.get("version", ""),
+                     json.dumps(card.get("capabilities", [])),
+                     json.dumps(card.get("endpoints", {})),
+                     json.dumps(card.get("dependencies", [])),
+                     json.dumps(card.get("trust_metadata", {})),
+                     int(time.time() * 1000000), "file"))
+                count += 1
+            except Exception as e:
+                print(f"[lineage-service] Error loading {filepath}: {e}")
+        conn.commit()
+        conn.close()
+        print(f"[lineage-service] Loaded {count} agent cards from {card_dir}")
+        return count
+
+    def get_db():
+        """Get a SQLite connection."""
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+    def fetch_traces(run_id):
+        """Fetch trace data from Jaeger for a given run_id."""
+        tags_json = json.dumps({"trust.run_id": run_id})
+        encoded_tags = urllib.parse.quote(tags_json)
+        search_url = f"{JAEGER_URL}/api/traces?service=envoy-ingress&tags={encoded_tags}&limit=100"
+        req = urllib.request.Request(search_url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+
+    def is_ingested(run_id):
+        """Check if a run_id has been ingested into SQLite."""
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT sealed FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+            return row is not None and row["sealed"] == 1
+        finally:
+            conn.close()
+
+    def ingest_run(run_id, handler=None):
+        """Ingest a run from Jaeger into SQLite.
+
+        Fetches spans, computes DAG + explain paths, writes everything
+        in one transaction. Returns True if ingested, False if already exists.
+        Uses a temporary handler instance for computation methods.
+        """
+        if is_ingested(run_id):
+            return False
+
+        trace_data = fetch_traces(run_id)
+        if not trace_data.get("data"):
+            return False
+
+        # Use handler for computation methods, or create a stub
+        if handler is None:
+            handler = LineageService.__new__(LineageService)
+
+        # Build DAG
+        dag = handler.build_dag(trace_data, run_id)
+        if "error" in dag:
+            return False
+
+        # Build explain paths for all resource nodes
+        resource_nodes = [n for n in dag.get("nodes", []) if n["type"] == "resource"]
+        all_paths = []
+        for rn in resource_nodes:
+            explanation = handler.build_explanation(trace_data, run_id, rn["id"])
+            if "error" not in explanation:
+                for cause in explanation.get("cause_groups", []):
+                    all_paths.append({
+                        "target_node": rn["id"],
+                        "full_path": json.dumps(cause.get("full_path", [])),
+                        "accessor": cause.get("accessor", ""),
+                        "hop_kind": cause.get("hop_kind", ""),
+                        "span_count": cause.get("span_count", 0),
+                    })
+
+        # Compute timestamps and content hash
+        all_ts = []
+        for edge in dag.get("edges", []):
+            all_ts.append(edge.get("first_ts", 0))
+            all_ts.append(edge.get("last_ts", 0))
+        started_at = min(all_ts) if all_ts else 0
+        ended_at = max(all_ts) if all_ts else 0
+
+        # Content hash from canonical representation
+        canonical = json.dumps({
+            "nodes": sorted([n["id"] for n in dag.get("nodes", [])]),
+            "edges": sorted([(e["source"], e["target"], e["hop_kind"]) for e in dag.get("edges", [])]),
+        }, sort_keys=True)
+        content_hash = hashlib.sha256(canonical.encode()).hexdigest()
+
+        # Write everything in one transaction
+        conn = get_db()
+        try:
+            c = conn.cursor()
+
+            # Insert run
+            c.execute("""INSERT OR REPLACE INTO runs
+                (run_id, principal_id, started_at, ended_at, ingested_at, sealed,
+                 schema_version, content_hash, node_count, edge_count, resource_count)
+                VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)""",
+                (run_id, dag.get("principal", "unknown"), started_at, ended_at,
+                 int(time.time() * 1000000), content_hash,
+                 len(dag.get("nodes", [])), len(dag.get("edges", [])),
+                 dag.get("summary", {}).get("resources", 0)))
+
+            # Insert nodes
+            for node in dag.get("nodes", []):
+                c.execute("INSERT OR REPLACE INTO nodes (run_id, node_id, type, label) VALUES (?, ?, ?, ?)",
+                    (run_id, node["id"], node["type"], node["label"]))
+
+            # Insert edges and edge_spans
+            for edge in dag.get("edges", []):
+                c.execute("""INSERT OR REPLACE INTO edges
+                    (run_id, source, target, hop_kind, logical_count, raw_count,
+                     first_ts, last_ts, total_duration_us)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (run_id, edge["source"], edge["target"], edge["hop_kind"],
+                     edge.get("logical_count", 0), edge.get("count", 0),
+                     edge.get("first_ts", 0), edge.get("last_ts", 0),
+                     edge.get("total_duration_us", 0)))
+
+                for span_id in edge.get("span_ids", []):
+                    c.execute("""INSERT OR REPLACE INTO edge_spans
+                        (run_id, source, target, hop_kind, span_id)
+                        VALUES (?, ?, ?, ?, ?)""",
+                        (run_id, edge["source"], edge["target"], edge["hop_kind"], span_id))
+
+            # Insert paths
+            for path in all_paths:
+                c.execute("""INSERT OR REPLACE INTO paths
+                    (run_id, target_node, full_path, accessor, hop_kind, span_count)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (run_id, path["target_node"], path["full_path"],
+                     path["accessor"], path["hop_kind"], path["span_count"]))
+
+            conn.commit()
+            print(f"[lineage-service] Ingested run {run_id}: {len(dag.get('nodes',[]))} nodes, {len(dag.get('edges',[]))} edges, {len(all_paths)} paths")
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[lineage-service] Ingest failed for {run_id}: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def ensure_ingested(run_id):
+        """Lazy ingest: if run is not in SQLite, fetch from Jaeger and ingest.
+        Returns True if data is available in SQLite after this call."""
+        if is_ingested(run_id):
+            return True
+        try:
+            return ingest_run(run_id)
+        except Exception as e:
+            print(f"[lineage-service] Lazy ingest failed for {run_id}: {e}")
+            return False
+
+    def read_dag_from_sqlite(run_id):
+        """Read DAG from SQLite. Returns dict or None if not found."""
+        conn = get_db()
+        try:
+            run = conn.execute("SELECT * FROM runs WHERE run_id = ? AND sealed = 1", (run_id,)).fetchone()
+            if not run:
+                return None
+
+            nodes = []
+            for row in conn.execute("SELECT node_id, type, label FROM nodes WHERE run_id = ?", (run_id,)):
+                nodes.append({"id": row["node_id"], "type": row["type"], "label": row["label"]})
+
+            edges = []
+            for row in conn.execute(
+                "SELECT source, target, hop_kind, logical_count, raw_count, first_ts, last_ts, total_duration_us FROM edges WHERE run_id = ?",
+                (run_id,)):
+                span_ids = [s["span_id"] for s in conn.execute(
+                    "SELECT span_id FROM edge_spans WHERE run_id = ? AND source = ? AND target = ? AND hop_kind = ?",
+                    (run_id, row["source"], row["target"], row["hop_kind"]))]
+                edges.append({
+                    "source": row["source"], "target": row["target"],
+                    "hop_kind": row["hop_kind"], "count": row["raw_count"],
+                    "logical_count": row["logical_count"], "span_ids": span_ids,
+                    "first_ts": row["first_ts"], "last_ts": row["last_ts"],
+                    "total_duration_us": row["total_duration_us"],
+                })
+
+            type_counts = {}
+            for n in nodes:
+                type_counts[n["type"]] = type_counts.get(n["type"], 0) + 1
+
+            return {
+                "run_id": run_id, "principal": run["principal_id"],
+                "nodes": nodes, "edges": edges, "source": "sqlite",
+                "field_descriptions": {
+                    "count": "Total raw span observations for this edge",
+                    "logical_count": "Number of unique span IDs observed (deduplicated)",
+                    "span_ids": "List of unique span IDs that contributed to this edge",
+                    "first_ts": "Timestamp (us) of the earliest span on this edge",
+                    "last_ts": "Timestamp (us) of the latest span on this edge",
+                    "total_duration_us": "Sum of all span durations on this edge (us)",
+                },
+                "summary": {
+                    "total_nodes": len(nodes), "total_edges": len(edges),
+                    "principals": type_counts.get("principal", 0),
+                    "agents": type_counts.get("agent", 0),
+                    "resources": type_counts.get("resource", 0),
+                },
+            }
+        finally:
+            conn.close()
+
+    def read_explain_from_sqlite(run_id, target_node):
+        """Read explain data from SQLite. Returns dict or None if not found."""
+        conn = get_db()
+        try:
+            run = conn.execute("SELECT * FROM runs WHERE run_id = ? AND sealed = 1", (run_id,)).fetchone()
+            if not run:
+                return None
+
+            path_rows = conn.execute(
+                "SELECT full_path, accessor, hop_kind, span_count FROM paths WHERE run_id = ? AND target_node = ?",
+                (run_id, target_node)).fetchall()
+
+            if not path_rows:
+                node = conn.execute("SELECT * FROM nodes WHERE run_id = ? AND node_id = ?", (run_id, target_node)).fetchone()
+                if not node:
+                    all_nodes = [r["node_id"] for r in conn.execute("SELECT node_id FROM nodes WHERE run_id = ?", (run_id,))]
+                    return {"error": f"Node '{target_node}' not found", "available_nodes": sorted(all_nodes)}
+                return {"error": f"No access paths found for {target_node}"}
+
+            # Build edge lookup for timing
+            edge_timing = {}
+            for row in conn.execute(
+                "SELECT source, target, hop_kind, first_ts, last_ts, total_duration_us FROM edges WHERE run_id = ?",
+                (run_id,)):
+                edge_timing[(row["source"], row["target"])] = {
+                    "hop_kind": row["hop_kind"], "first_ts": row["first_ts"],
+                    "last_ts": row["last_ts"], "total_duration_us": row["total_duration_us"],
+                }
+
+            cause_groups = []
+            for row in path_rows:
+                full_path = json.loads(row["full_path"])
+                delegation = []
+                for i in range(len(full_path) - 2, 0, -1):
+                    edge_key = (full_path[i-1], full_path[i])
+                    timing = edge_timing.get(edge_key, {})
+                    delegation.append({
+                        "actor": full_path[i-1],
+                        "hop_kind": timing.get("hop_kind", "principal_to_agent" if i == 1 else "agent_to_agent"),
+                        "first_ts": timing.get("first_ts", 0),
+                    })
+
+                last_edge = edge_timing.get((full_path[-2], full_path[-1]), {})
+                cause_groups.append({
+                    "accessor": row["accessor"], "hop_kind": row["hop_kind"],
+                    "span_count": row["span_count"], "span_ids": [],
+                    "first_ts": last_edge.get("first_ts", 0),
+                    "last_ts": last_edge.get("last_ts", 0),
+                    "total_duration_us": last_edge.get("total_duration_us", 0),
+                    "full_path": full_path, "delegated_by": delegation,
+                })
+            cause_groups.sort(key=lambda c: c["first_ts"])
+
+            handler = LineageService.__new__(LineageService)
+            parallel_groups = handler.detect_parallel_execution(cause_groups)
+            direct_accessors = list(set(c["accessor"] for c in cause_groups))
+
+            return {
+                "question": f"Why was {target_node} accessed?",
+                "target": target_node,
+                "target_type": handler.get_node_type(target_node),
+                "run_id": run_id, "principal": run["principal_id"],
+                "direct_accessors": direct_accessors,
+                "cause_groups": cause_groups,
+                "parallel_groups": parallel_groups,
+                "delegation_order": "closest-first (immediate caller first, principal last)",
+                "source": "sqlite",
+                "field_descriptions": {
+                    "span_count": "Number of individual spans attributed to this specific path",
+                    "total_duration_us": "Sum of span durations attributed to this path (us)",
+                },
+                "answer": handler.generate_answer(target_node, run["principal_id"], cause_groups, parallel_groups),
+            }
+        finally:
+            conn.close()
+
+    def read_trust_from_sqlite(run_id):
+        """Read trust chain from SQLite. Returns dict or None if not found."""
+        conn = get_db()
+        try:
+            run = conn.execute("SELECT * FROM runs WHERE run_id = ? AND sealed = 1", (run_id,)).fetchone()
+            if not run:
+                return None
+
+            path_rows = conn.execute(
+                "SELECT full_path FROM paths WHERE run_id = ?", (run_id,)).fetchall()
+
+            edge_timing = {}
+            for row in conn.execute(
+                "SELECT source, target, hop_kind, first_ts, total_duration_us FROM edges WHERE run_id = ?",
+                (run_id,)):
+                edge_timing[(row["source"], row["target"])] = {
+                    "hop_kind": row["hop_kind"], "first_ts": row["first_ts"],
+                    "total_duration_us": row["total_duration_us"],
+                }
+
+            seen_events = set()
+            events = []
+            for row in path_rows:
+                full_path = json.loads(row["full_path"])
+                for i in range(len(full_path) - 1):
+                    source, target = full_path[i], full_path[i + 1]
+                    causal_path = full_path[:i + 2]
+                    event_key = (source, target, tuple(causal_path))
+                    if event_key in seen_events:
+                        continue
+                    seen_events.add(event_key)
+                    edge_info = edge_timing.get((source, target), {})
+                    events.append({
+                        "source": source, "target": target,
+                        "hop_kind": edge_info.get("hop_kind", "unknown"),
+                        "start_time": edge_info.get("first_ts", 0),
+                        "span_duration_us": edge_info.get("total_duration_us", 0),
+                        "causal_path": causal_path,
+                    })
+            events.sort(key=lambda e: e["start_time"])
+
+            agents, resources = set(), set()
+            for event in events:
+                for actor in [event["source"], event["target"]]:
+                    if actor.startswith("agent:"):
+                        agents.add(actor)
+                    elif actor.startswith("resource:"):
+                        resources.add(actor)
+
+            lineage = {
+                "run_id": run_id,
+                "type": "topologically_ordered_event_list",
+                "description": "All causal hops in temporal order. Duplicate edges from different delegation paths appear separately.",
+                "principal": run["principal_id"],
+                "total_events": len(events),
+                "agents_involved": sorted(list(agents)),
+                "resources_accessed": sorted(list(resources)),
+                "source": "sqlite",
+                "field_descriptions": {
+                    "span_duration_us": "Duration of this edge (from SQLite, may be aggregated)",
+                    "causal_path": "Full delegation chain from principal to this hop's target",
+                },
+                "trust_chain": [],
+            }
+            for i, event in enumerate(events):
+                lineage["trust_chain"].append({
+                    "step": i + 1, "hop_kind": event["hop_kind"],
+                    "source": event["source"], "target": event["target"],
+                    "span_duration_us": event["span_duration_us"],
+                    "causal_path": event["causal_path"],
+                })
+            return lineage
+        finally:
+            conn.close()
+
+    def percentile(values, p):
+        """Compute p-th percentile of a sorted list. Returns 0 for empty lists."""
+        if not values:
+            return 0
+        values = sorted(values)
+        k = (len(values) - 1) * (p / 100.0)
+        f = int(k)
+        c = f + 1 if f + 1 < len(values) else f
+        d = k - f
+        return values[f] + d * (values[c] - values[f])
+
+    def compute_baselines(exclude_run_id):
+        """Compute all baselines from historical data, excluding the given run_id.
+        Returns (set_baselines, pct_baselines, baseline_count)."""
+        conn = get_db()
+        try:
+            # Count baseline runs
+            baseline_runs = conn.execute(
+                "SELECT COUNT(*) as cnt FROM runs WHERE run_id != ? AND sealed = 1",
+                (exclude_run_id,)).fetchone()["cnt"]
+
+            # --- Set-based baselines ---
+            known_edges = set()
+            for row in conn.execute(
+                "SELECT DISTINCT source, target, hop_kind FROM edges WHERE run_id != ?",
+                (exclude_run_id,)):
+                known_edges.add((row["source"], row["target"], row["hop_kind"]))
+
+            known_paths = set()
+            for row in conn.execute(
+                "SELECT DISTINCT full_path FROM paths WHERE run_id != ?",
+                (exclude_run_id,)):
+                known_paths.add(row["full_path"])
+
+            known_callees = {}  # agent_id -> set of targets
+            for row in conn.execute(
+                "SELECT source, target FROM edges WHERE run_id != ? AND hop_kind IN ('agent_to_agent', 'agent_to_resource')",
+                (exclude_run_id,)):
+                known_callees.setdefault(row["source"], set()).add(row["target"])
+
+            set_baselines = {
+                "known_edges": known_edges,
+                "known_paths": known_paths,
+                "known_callees": known_callees,
+            }
+
+            # --- Percentile-based baselines ---
+            # Fanout per agent per run
+            fanout_by_agent = {}  # agent -> [counts per run]
+            for row in conn.execute("""
+                SELECT run_id, source, COUNT(DISTINCT target) as fanout
+                FROM edges WHERE run_id != ? AND hop_kind IN ('agent_to_agent', 'agent_to_resource')
+                GROUP BY run_id, source""", (exclude_run_id,)):
+                fanout_by_agent.setdefault(row["source"], []).append(row["fanout"])
+            fanout_p95 = {agent: percentile(vals, 95) for agent, vals in fanout_by_agent.items()}
+
+            # Max path depth per run
+            depth_per_run = []
+            for row in conn.execute("""
+                SELECT run_id, MAX(LENGTH(full_path) - LENGTH(REPLACE(full_path, ',', ''))) + 1 as depth
+                FROM paths WHERE run_id != ?
+                GROUP BY run_id""", (exclude_run_id,)):
+                depth_per_run.append(row["depth"])
+            depth_p95_val = percentile(depth_per_run, 95)
+
+            # Edge logical_count per (source, target) per run
+            edge_count_by_pair = {}  # (source, target) -> [counts per run]
+            for row in conn.execute("""
+                SELECT run_id, source, target, logical_count
+                FROM edges WHERE run_id != ?""", (exclude_run_id,)):
+                key = (row["source"], row["target"])
+                edge_count_by_pair.setdefault(key, []).append(row["logical_count"])
+            edge_count_p95 = {k: percentile(vals, 95) for k, vals in edge_count_by_pair.items()}
+
+            pct_baselines = {
+                "fanout_p95": fanout_p95,
+                "depth_p95": depth_p95_val,
+                "edge_count_p95": edge_count_p95,
+            }
+
+            return set_baselines, pct_baselines, baseline_runs
+        finally:
+            conn.close()
+
+    def check_capability_alignment(run_id):
+        """Compare observed DAG edges against declared agent card dependencies.
+        Returns list of capability check results per agent."""
+        conn = get_db()
+        try:
+            # Get observed callees per agent for this run
+            observed = {}
+            for row in conn.execute("""
+                SELECT source, target, hop_kind FROM edges
+                WHERE run_id = ? AND hop_kind IN ('agent_to_agent', 'agent_to_resource')""",
+                (run_id,)):
+                observed.setdefault(row["source"], []).append({
+                    "target": row["target"], "hop_kind": row["hop_kind"]})
+
+            # Get all agent cards
+            cards = {}
+            for row in conn.execute("SELECT agent_id, dependencies FROM agent_cards"):
+                deps = json.loads(row["dependencies"]) if row["dependencies"] else []
+                cards[row["agent_id"]] = set(deps)
+
+            results = []
+            for agent_id, callees in observed.items():
+                observed_targets = set(c["target"] for c in callees)
+
+                if agent_id not in cards:
+                    results.append({
+                        "agent": agent_id,
+                        "status": "unknown",
+                        "detail": "No agent card registered",
+                        "observed_callees": sorted(observed_targets),
+                    })
+                    continue
+
+                declared = cards[agent_id]
+                violating = observed_targets - declared
+                if not violating:
+                    results.append({
+                        "agent": agent_id,
+                        "status": "aligned",
+                        "declared_dependencies": sorted(declared),
+                        "observed_callees": sorted(observed_targets),
+                    })
+                else:
+                    violating_edges = [c for c in callees if c["target"] in violating]
+                    results.append({
+                        "agent": agent_id,
+                        "status": "overreach",
+                        "declared_dependencies": sorted(declared),
+                        "observed_callees": sorted(observed_targets),
+                        "violating_edges": violating_edges,
+                    })
+
+            return results
+        finally:
+            conn.close()
+
+    def assess_run(run_id):
+        """Run the 6 scoring rules + capability alignment for a given run.
+        Returns the full assessment dict."""
+        # Ensure data is in SQLite
+        ensure_ingested(run_id)
+
+        dag = read_dag_from_sqlite(run_id)
+        if dag is None:
+            return {"error": f"No data found for run_id: {run_id}"}
+
+        set_bl, pct_bl, baseline_runs = compute_baselines(run_id)
+        reasons = []
+        novel_edges = []
+        novel_paths = []
+
+        # Read current run's edges and paths
+        conn = get_db()
+        try:
+            cur_edges = conn.execute(
+                "SELECT source, target, hop_kind, logical_count FROM edges WHERE run_id = ?",
+                (run_id,)).fetchall()
+            cur_paths = conn.execute(
+                "SELECT full_path, target_node FROM paths WHERE run_id = ?",
+                (run_id,)).fetchall()
+        finally:
+            conn.close()
+
+        # Get span_ids for edges (for referencing in findings)
+        conn = get_db()
+        try:
+            edge_spans_map = {}
+            for row in conn.execute(
+                "SELECT source, target, hop_kind, span_id FROM edge_spans WHERE run_id = ?",
+                (run_id,)):
+                key = (row["source"], row["target"], row["hop_kind"])
+                edge_spans_map.setdefault(key, []).append(row["span_id"])
+        finally:
+            conn.close()
+
+        # --- Rule 1: Novel edge (15 pts) ---
+        for edge in cur_edges:
+            edge_tuple = (edge["source"], edge["target"], edge["hop_kind"])
+            if edge_tuple not in set_bl["known_edges"]:
+                span_ids = edge_spans_map.get(edge_tuple, [])
+                novel_edges.append({
+                    "source": edge["source"], "target": edge["target"],
+                    "hop_kind": edge["hop_kind"]})
+                reasons.append({
+                    "rule": "novel_edge", "score": 15,
+                    "edge": {"source": edge["source"], "target": edge["target"],
+                             "hop_kind": edge["hop_kind"]},
+                    "span_ids": span_ids,
+                    "detail": f"Edge {edge['source']} -> {edge['target']} ({edge['hop_kind']}) "
+                              f"never seen in {baseline_runs} prior runs",
+                })
+
+        # --- Rule 2: Novel resource access (20 pts) ---
+        for edge in cur_edges:
+            if edge["hop_kind"] != "agent_to_resource":
+                continue
+            agent = edge["source"]
+            resource = edge["target"]
+            agent_known = set_bl["known_callees"].get(agent, set())
+            if resource not in agent_known:
+                span_ids = edge_spans_map.get(
+                    (edge["source"], edge["target"], edge["hop_kind"]), [])
+                # Don't double-count if already flagged as novel_edge
+                already_flagged = any(
+                    r["rule"] == "novel_edge" and r["edge"]["source"] == agent
+                    and r["edge"]["target"] == resource for r in reasons)
+                reasons.append({
+                    "rule": "novel_resource_access", "score": 20,
+                    "edge": {"source": agent, "target": resource,
+                             "hop_kind": edge["hop_kind"]},
+                    "span_ids": span_ids,
+                    "detail": f"{agent} has never accessed {resource} in {baseline_runs} prior runs",
+                })
+
+        # --- Rule 3: Depth exceeded (10 pts) ---
+        max_depth = 0
+        for path_row in cur_paths:
+            path_list = json.loads(path_row["full_path"])
+            max_depth = max(max_depth, len(path_list))
+        if max_depth > 0 and pct_bl["depth_p95"] > 0 and max_depth > pct_bl["depth_p95"]:
+            reasons.append({
+                "rule": "depth_exceeded", "score": 10,
+                "detail": f"Max path depth {max_depth} exceeds p95 baseline of {pct_bl['depth_p95']:.1f}",
+                "observed": max_depth, "baseline_p95": pct_bl["depth_p95"],
+            })
+
+        # --- Rule 4: Fanout exceeded (10 pts per agent) ---
+        agent_fanout = {}
+        for edge in cur_edges:
+            if edge["hop_kind"] in ("agent_to_agent", "agent_to_resource"):
+                agent_fanout.setdefault(edge["source"], set()).add(edge["target"])
+        for agent, targets in agent_fanout.items():
+            fanout = len(targets)
+            baseline = pct_bl["fanout_p95"].get(agent, 0)
+            if baseline > 0 and fanout > baseline:
+                reasons.append({
+                    "rule": "fanout_exceeded", "score": 10,
+                    "agent": agent,
+                    "detail": f"{agent} fanout {fanout} exceeds p95 baseline of {baseline:.1f}",
+                    "observed": fanout, "baseline_p95": baseline,
+                })
+
+        # --- Rule 5: Retry storm / spike (15 pts per edge) ---
+        for edge in cur_edges:
+            edge_pair = (edge["source"], edge["target"])
+            baseline = pct_bl["edge_count_p95"].get(edge_pair, 0)
+            if baseline > 0 and edge["logical_count"] > baseline:
+                span_ids = edge_spans_map.get(
+                    (edge["source"], edge["target"], edge["hop_kind"]), [])
+                reasons.append({
+                    "rule": "retry_storm", "score": 15,
+                    "edge": {"source": edge["source"], "target": edge["target"],
+                             "hop_kind": edge["hop_kind"]},
+                    "span_ids": span_ids,
+                    "detail": f"Edge {edge['source']} -> {edge['target']} logical_count "
+                              f"{edge['logical_count']} exceeds p95 baseline of {baseline:.1f}",
+                    "observed": edge["logical_count"], "baseline_p95": baseline,
+                })
+
+        # --- Rule 6: New delegation path (10 pts per path) ---
+        for path_row in cur_paths:
+            if path_row["full_path"] not in set_bl["known_paths"]:
+                path_list = json.loads(path_row["full_path"])
+                novel_paths.append(path_list)
+                reasons.append({
+                    "rule": "novel_path", "score": 10,
+                    "path": path_list,
+                    "detail": f"Delegation path {' -> '.join(path_list)} never seen in {baseline_runs} prior runs",
+                })
+
+        # --- Score and verdict ---
+        risk_score = min(100, sum(r["score"] for r in reasons))
+        if risk_score <= 25:
+            verdict = "ok"
+        elif risk_score <= 60:
+            verdict = "warn"
+        else:
+            verdict = "high"
+
+        # --- Capability alignment ---
+        capability_mismatches = check_capability_alignment(run_id)
+
+        result = {
+            "run_id": run_id,
+            "verdict": verdict,
+            "risk_score": risk_score,
+            "baseline_runs": baseline_runs,
+            "reasons": reasons,
+            "novel_edges": novel_edges,
+            "novel_paths": novel_paths,
+            "capability_alignment": capability_mismatches,
+        }
+
+        if baseline_runs == 0:
+            result["note"] = ("No baseline data. This is the first ingested run. "
+                              "Subsequent runs will establish the baseline.")
+
+        return result
 
     class LineageService(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -32,13 +809,21 @@ data:
             elif len(path_parts) == 3 and path_parts[0] == "lineage" and path_parts[2] == "trust":
                 run_id = urllib.parse.unquote(path_parts[1])
                 self.handle_trust_lineage(run_id, output_format)
+            elif len(path_parts) == 3 and path_parts[0] == "lineage" and path_parts[2] == "assess":
+                run_id = urllib.parse.unquote(path_parts[1])
+                self.handle_assess(run_id, output_format)
             elif len(path_parts) == 2 and path_parts[0] == "lineage":
                 run_id = urllib.parse.unquote(path_parts[1])
                 self.handle_lineage(run_id, output_format)
+            elif path_parts == ["agent-cards"]:
+                self.handle_list_agent_cards()
+            elif len(path_parts) == 2 and path_parts[0] == "agent-cards":
+                agent_id = urllib.parse.unquote(path_parts[1])
+                self.handle_get_agent_card(agent_id)
             elif parsed.path == "/health":
                 self.send_json({"status": "ok"})
             else:
-                self.send_json({"error": "Endpoints: /lineage/all, /lineage/{run_id}, /lineage/{run_id}/trust, /lineage/{run_id}/dag, /lineage/{run_id}/explain?node=..."}, 400)
+                self.send_json({"error": "Endpoints: /lineage/all, /lineage/{run_id}, /lineage/{run_id}/trust, /lineage/{run_id}/dag, /lineage/{run_id}/explain?node=..., /lineage/{run_id}/assess, /agent-cards, /agent-cards/{agent_id}"}, 400)
 
         def handle_all_traces(self, output_format):
             """List all available trace IDs from Jaeger (envoy-ingress only)."""
@@ -129,46 +914,44 @@ data:
                 self.send_json({"error": str(e)}, 500)
 
         def handle_trust_lineage(self, run_id, output_format):
-            """Handle /lineage/{run_id}/trust - deduplicated trust graph view."""
+            """Handle /lineage/{run_id}/trust - deduplicated trust graph view.
+            SQLite-first: reads from SQLite if ingested, otherwise lazy-ingests then reads."""
             try:
-                tags_json = json.dumps({"trust.run_id": run_id})
-                encoded_tags = urllib.parse.quote(tags_json)
-                search_url = f"{JAEGER_URL}/api/traces?service=envoy-ingress&tags={encoded_tags}&limit=100"
-                req = urllib.request.Request(search_url)
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    trace_data = json.loads(resp.read().decode())
+                # Try SQLite first
+                ensure_ingested(run_id)
+                lineage = read_trust_from_sqlite(run_id)
 
-                lineage = self.build_trust_lineage(trace_data, run_id)
+                # Fallback to direct Jaeger computation
+                if lineage is None:
+                    trace_data = fetch_traces(run_id)
+                    lineage = self.build_trust_lineage(trace_data, run_id)
 
                 if output_format == "text":
                     self.send_text(self.format_trust_lineage_text(lineage))
                 else:
                     self.send_json(lineage)
 
-            except urllib.error.HTTPError as e:
-                self.send_json({"error": f"Jaeger error: {e.code}"}, 500)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
 
         def handle_dag(self, run_id, output_format):
-            """Handle /lineage/{run_id}/dag - Trust DAG representation."""
+            """Handle /lineage/{run_id}/dag - Trust DAG representation.
+            SQLite-first: reads from SQLite if ingested, otherwise lazy-ingests then reads."""
             try:
-                tags_json = json.dumps({"trust.run_id": run_id})
-                encoded_tags = urllib.parse.quote(tags_json)
-                search_url = f"{JAEGER_URL}/api/traces?service=envoy-ingress&tags={encoded_tags}&limit=100"
-                req = urllib.request.Request(search_url)
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    trace_data = json.loads(resp.read().decode())
+                # Try SQLite first
+                ensure_ingested(run_id)
+                dag = read_dag_from_sqlite(run_id)
 
-                dag = self.build_dag(trace_data, run_id)
+                # Fallback to direct Jaeger computation
+                if dag is None:
+                    trace_data = fetch_traces(run_id)
+                    dag = self.build_dag(trace_data, run_id)
 
                 if output_format == "dot":
                     self.send_text(self.format_dag_dot(dag), 200)
                 else:
                     self.send_json(dag)
 
-            except urllib.error.HTTPError as e:
-                self.send_json({"error": f"Jaeger error: {e.code}"}, 500)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
 
@@ -336,32 +1119,30 @@ data:
             return '\n'.join(lines)
 
         def handle_explain(self, run_id, node, output_format):
-            """Handle /lineage/{run_id}/explain?node=... - Explain why a node was accessed."""
+            """Handle /lineage/{run_id}/explain?node=... - Explain why a node was accessed.
+            SQLite-first: reads from SQLite if ingested, otherwise lazy-ingests then reads."""
             if not node:
                 self.send_json({"error": "Missing 'node' parameter. Example: ?node=resource:mock-database"}, 400)
                 return
 
             try:
-                tags_json = json.dumps({"trust.run_id": run_id})
-                encoded_tags = urllib.parse.quote(tags_json)
-                search_url = f"{JAEGER_URL}/api/traces?service=envoy-ingress&tags={encoded_tags}&limit=100"
-                req = urllib.request.Request(search_url)
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    trace_data = json.loads(resp.read().decode())
+                # Try SQLite first
+                ensure_ingested(run_id)
+                explanation = read_explain_from_sqlite(run_id, node)
 
-                if not trace_data.get("data"):
-                    self.send_json({"error": f"No traces found for run_id: {run_id}"}, 404)
-                    return
-
-                explanation = self.build_explanation(trace_data, run_id, node)
+                # Fallback to direct Jaeger computation
+                if explanation is None:
+                    trace_data = fetch_traces(run_id)
+                    if not trace_data.get("data"):
+                        self.send_json({"error": f"No traces found for run_id: {run_id}"}, 404)
+                        return
+                    explanation = self.build_explanation(trace_data, run_id, node)
 
                 if output_format == "text":
                     self.send_text(self.format_explanation_text(explanation))
                 else:
                     self.send_json(explanation)
 
-            except urllib.error.HTTPError as e:
-                self.send_json({"error": f"Jaeger error: {e.code}"}, 500)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
 
@@ -939,6 +1720,179 @@ data:
             lines.append("=" * 60)
             return "\n".join(lines)
 
+        def handle_assess(self, run_id, output_format):
+            """Handle /lineage/{run_id}/assess - Trust assessment."""
+            try:
+                result = assess_run(run_id)
+                if "error" in result:
+                    self.send_json(result, 404)
+                    return
+                if output_format == "text":
+                    self.send_text(self.format_assess_text(result))
+                else:
+                    self.send_json(result)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
+        def format_assess_text(self, result):
+            """Format assessment as human-readable text."""
+            v = result["verdict"].upper()
+            lines = [
+                "=" * 70,
+                f"TRUST ASSESSMENT",
+                "=" * 70,
+                f"Run ID:        {result['run_id']}",
+                f"Verdict:       {v}",
+                f"Risk Score:    {result['risk_score']} / 100",
+                f"Baseline Runs: {result['baseline_runs']}",
+            ]
+            if "note" in result:
+                lines.append(f"Note:          {result['note']}")
+            lines.append("")
+
+            reasons = result.get("reasons", [])
+            if reasons:
+                lines.append(f"FINDINGS ({len(reasons)}):")
+                lines.append("-" * 70)
+                for i, r in enumerate(reasons, 1):
+                    lines.append(f"  {i}. [{r['rule']}] +{r['score']}pts")
+                    lines.append(f"     {r['detail']}")
+                    if "edge" in r:
+                        e = r["edge"]
+                        lines.append(f"     edge: {e['source']} -> {e['target']} ({e.get('hop_kind','')})")
+                    if "path" in r:
+                        lines.append(f"     path: {' -> '.join(r['path'])}")
+                    if r.get("span_ids"):
+                        lines.append(f"     spans: {', '.join(r['span_ids'][:5])}")
+            else:
+                lines.append("FINDINGS: none")
+
+            lines.append("")
+            novel = result.get("novel_edges", [])
+            if novel:
+                lines.append(f"NOVEL EDGES ({len(novel)}):")
+                for e in novel:
+                    lines.append(f"  {e['source']} -> {e['target']} ({e['hop_kind']})")
+            novel_p = result.get("novel_paths", [])
+            if novel_p:
+                lines.append(f"NOVEL PATHS ({len(novel_p)}):")
+                for p in novel_p:
+                    lines.append(f"  {' -> '.join(p)}")
+
+            lines.append("")
+            cap = result.get("capability_alignment", [])
+            if cap:
+                lines.append(f"CAPABILITY ALIGNMENT ({len(cap)} agents):")
+                lines.append("-" * 70)
+                for c in cap:
+                    status = c["status"].upper()
+                    lines.append(f"  {c['agent']}: {status}")
+                    if c["status"] == "overreach":
+                        lines.append(f"    declared: {c.get('declared_dependencies', [])}")
+                        lines.append(f"    observed: {c.get('observed_callees', [])}")
+                        for ve in c.get("violating_edges", []):
+                            lines.append(f"    VIOLATION: -> {ve['target']} ({ve['hop_kind']})")
+                    elif c["status"] == "unknown":
+                        lines.append(f"    {c.get('detail', '')}")
+
+            lines.append("")
+            lines.append("=" * 70)
+            return "\n".join(lines)
+
+        def do_POST(self):
+            parsed = urllib.parse.urlparse(self.path)
+            path_parts = parsed.path.strip("/").split("/")
+
+            if path_parts == ["agent-cards"]:
+                self.handle_register_agent_card()
+            else:
+                self.send_json({"error": "POST endpoints: /agent-cards"}, 400)
+
+        def handle_list_agent_cards(self):
+            """GET /agent-cards - list all registered agent cards."""
+            try:
+                conn = get_db()
+                rows = conn.execute("SELECT * FROM agent_cards ORDER BY name").fetchall()
+                conn.close()
+                cards = []
+                for row in rows:
+                    cards.append({
+                        "agent_id": row["agent_id"],
+                        "name": row["name"],
+                        "version": row["version"],
+                        "capabilities": json.loads(row["capabilities"]) if row["capabilities"] else [],
+                        "endpoints": json.loads(row["endpoints"]) if row["endpoints"] else {},
+                        "dependencies": json.loads(row["dependencies"]) if row["dependencies"] else [],
+                        "trust_metadata": json.loads(row["trust_metadata"]) if row["trust_metadata"] else {},
+                        "registered_at": row["registered_at"],
+                        "source": row["source"],
+                    })
+                self.send_json({"total": len(cards), "agent_cards": cards})
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
+        def handle_get_agent_card(self, agent_id):
+            """GET /agent-cards/{agent_id} - get a single agent card."""
+            try:
+                # Support both "agent:name" and just "name" lookup
+                conn = get_db()
+                row = conn.execute("SELECT * FROM agent_cards WHERE agent_id = ?", (agent_id,)).fetchone()
+                if not row and not agent_id.startswith("agent:"):
+                    row = conn.execute("SELECT * FROM agent_cards WHERE agent_id = ?", (f"agent:{agent_id}",)).fetchone()
+                conn.close()
+
+                if not row:
+                    self.send_json({"error": f"Agent card not found: {agent_id}"}, 404)
+                    return
+
+                card = {
+                    "agent_id": row["agent_id"],
+                    "name": row["name"],
+                    "version": row["version"],
+                    "capabilities": json.loads(row["capabilities"]) if row["capabilities"] else [],
+                    "endpoints": json.loads(row["endpoints"]) if row["endpoints"] else {},
+                    "dependencies": json.loads(row["dependencies"]) if row["dependencies"] else [],
+                    "trust_metadata": json.loads(row["trust_metadata"]) if row["trust_metadata"] else {},
+                    "registered_at": row["registered_at"],
+                    "source": row["source"],
+                }
+                self.send_json(card)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
+        def handle_register_agent_card(self):
+            """POST /agent-cards - register a new agent card."""
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode()
+                card = json.loads(body)
+
+                agent_id = card.get("agent_id")
+                if not agent_id:
+                    self.send_json({"error": "Missing required field: agent_id"}, 400)
+                    return
+
+                conn = get_db()
+                conn.execute("""INSERT OR REPLACE INTO agent_cards
+                    (agent_id, name, version, capabilities, endpoints, dependencies,
+                     trust_metadata, registered_at, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (agent_id, card.get("name", ""),
+                     card.get("version", ""),
+                     json.dumps(card.get("capabilities", [])),
+                     json.dumps(card.get("endpoints", {})),
+                     json.dumps(card.get("dependencies", [])),
+                     json.dumps(card.get("trust_metadata", {})),
+                     int(time.time() * 1000000), "api"))
+                conn.commit()
+                conn.close()
+
+                self.send_json({"status": "registered", "agent_id": agent_id}, 201)
+            except json.JSONDecodeError:
+                self.send_json({"error": "Invalid JSON body"}, 400)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
         def send_json(self, data, status=200):
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -952,6 +1906,8 @@ data:
             self.wfile.write(text.encode())
 
     if __name__ == "__main__":
+        init_db()
+        load_agent_cards_from_dir()
         print("[lineage-service] Starting on port 8080...")
         HTTPServer(("0.0.0.0", 8080), LineageService).serve_forever()
 ---
@@ -979,13 +1935,27 @@ spec:
           env:
             - name: JAEGER_URL
               value: "http://jaeger.observability.svc.cluster.local:16686"
+            - name: DB_PATH
+              value: "/data/lineage.db"
+            - name: AGENT_CARDS_DIR
+              value: "/agent-cards"
           volumeMounts:
             - name: config
               mountPath: /app
+            - name: data
+              mountPath: /data
+            - name: agent-cards
+              mountPath: /agent-cards
       volumes:
         - name: config
           configMap:
             name: lineage-service-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: lineage-data
+        - name: agent-cards
+          configMap:
+            name: agent-cards-config
 ---
 apiVersion: v1
 kind: Service

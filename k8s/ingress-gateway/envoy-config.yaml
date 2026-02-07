@@ -59,6 +59,13 @@ data:
                                 cluster: lineage_service
                               decorator:
                                 operation: "lineage-query"
+                            # Agent cards API
+                            - match:
+                                prefix: "/agent-cards"
+                              route:
+                                cluster: lineage_service
+                              decorator:
+                                operation: "agent-cards"
                             # Route for chat-agent orchestrator
                             - match:
                                 prefix: "/chat"

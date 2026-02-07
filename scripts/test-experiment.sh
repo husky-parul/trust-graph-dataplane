@@ -1,19 +1,26 @@
 #!/bin/bash
-# Test the claude -> summary-agent -> read-agent -> database lineage
+# Test Experiment 1: Basic multi-agent trust lineage with sidecar proxies
 
-echo "=== Trust Graph Experiment: User Claude ==="
-echo ""
-echo "Flow: claude (user) -> summary-agent -> read-agent -> mock-database"
+set -e
+
+INGRESS_URL="${INGRESS_URL:-http://localhost:8080}"
+
+echo "=== Trust Graph Experiment 1: Multi-Agent Trust Lineage ==="
 echo ""
 
-# Test with x-principal-id header identifying the user as "claude"
-echo "1. Testing salary summary (full chain)..."
-curl -s -H "x-principal-id: claude" http://localhost:8080/summary/salaries | jq .
+echo "1. Testing salary summary (full chain: claude -> summary-agent -> read-agent -> mock-database)..."
+curl -s -H "x-principal-id: claude" "${INGRESS_URL}/summary/salaries" | python3 -m json.tool
 
 echo ""
-echo "2. Check Jaeger UI for trace lineage:"
+sleep 2
+
+echo "2. Checking lineage runs..."
+curl -s "${INGRESS_URL}/lineage/all?format=text"
+
+echo ""
+echo "3. Check Jaeger UI for trace lineage:"
 echo "   http://localhost:16686"
 echo ""
 echo "   Look for spans showing:"
-echo "   - principal: claude"
-echo "   - agent chain: ingress -> summary-agent -> read-agent -> database"
+echo "   - trust.principal_id: user:claude"
+echo "   - trust.hop_kind: principal_to_agent -> agent_to_agent -> agent_to_resource"

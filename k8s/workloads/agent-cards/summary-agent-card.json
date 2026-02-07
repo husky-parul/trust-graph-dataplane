@@ -1,4 +1,5 @@
 {
+  "agent_id": "agent:summary-agent",
   "name": "summary-agent",
   "version": "1.0.0",
   "description": "Aggregates and summarizes salary data from read-agent",
@@ -14,19 +15,13 @@
         "method": "GET",
         "path": "/summary/salaries",
         "description": "Returns salary statistics: total employees, total salary, average salary"
-      },
-      "health": {
-        "method": "GET",
-        "path": "/",
-        "description": "Health check endpoint"
       }
     }
   },
-  "dependencies": {
-    "downstream": ["read-agent"]
-  },
+  "dependencies": [
+    "agent:read-agent"
+  ],
   "trust_metadata": {
-    "agent_id": "agent:summary-agent",
     "hop_kinds_supported": ["principal_to_agent", "agent_to_agent"],
     "agents_called": ["agent:read-agent"]
   }

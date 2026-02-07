@@ -1,44 +1,61 @@
 #!/bin/bash
+# Test all lineage endpoints for a given run_id
+
 set -euo pipefail
 
 INGRESS_URL="${INGRESS_URL:-http://localhost:8080}"
-PRINCIPAL="${1:-user-alice}"
 
-echo "=== Trust Graph Lineage Demo ==="
-echo ""
-echo "Principal: ${PRINCIPAL}"
-echo ""
+# Get run_id from argument or find the latest
+if [ $# -ge 1 ]; then
+    RUN_ID="$1"
+else
+    echo "Finding latest run_id..."
+    RUN_ID=$(curl -s "${INGRESS_URL}/lineage/all" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+runs = d.get('runs', [])
+if runs:
+    print(runs[0]['run_id'])
+else:
+    print('NONE')
+")
+    if [ "$RUN_ID" = "NONE" ]; then
+        echo "No runs found. Send a request first:"
+        echo "  curl -X POST -H 'x-principal-id: claude' -H 'Content-Type: application/json' \\"
+        echo "    -d '{\"prompt\": \"show me sales and employee summary\"}' http://localhost:8080/chat"
+        exit 1
+    fi
+fi
 
-echo "--- Test 1: Single hop (Principal → Ingress → Agent) ---"
-echo "curl ${INGRESS_URL}/agent"
-curl -s "${INGRESS_URL}/agent" \
-    -H "x-principal-id: ${PRINCIPAL}" \
-    -H "x-request-id: single-hop-$(date +%s)" | head -c 200
-echo ""
-echo ""
-
-echo "--- Test 2: Two hops (Principal → Ingress → Caller-Agent) ---"
-echo "curl ${INGRESS_URL}/caller"
-curl -s "${INGRESS_URL}/caller" \
-    -H "x-principal-id: ${PRINCIPAL}" \
-    -H "x-request-id: two-hop-$(date +%s)" | head -c 200
-echo ""
-echo ""
-
-echo "--- Test 3: Full chain (Principal → Ingress → Caller-Agent → Egress → External) ---"
-echo "curl ${INGRESS_URL}/chain"
-RESPONSE=$(curl -s "${INGRESS_URL}/chain" \
-    -H "x-principal-id: ${PRINCIPAL}" \
-    -H "x-request-id: full-chain-$(date +%s)" 2>&1 || echo "Request failed - external service may be unreachable")
-echo "${RESPONSE}" | head -c 500
-echo ""
+echo "=== Lineage for run_id: ${RUN_ID} ==="
 echo ""
 
-echo "=== Lineage Summary ==="
+echo "--- Debug view (/lineage/{run_id}) ---"
+curl -s "${INGRESS_URL}/lineage/${RUN_ID}?format=text" | head -30
 echo ""
-echo "Test 1: Principal(${PRINCIPAL}) → ingress-gateway → agent"
-echo "Test 2: Principal(${PRINCIPAL}) → ingress-gateway → caller-agent"
-echo "Test 3: Principal(${PRINCIPAL}) → ingress-gateway → caller-agent → egress-gateway → httpbin.org"
+
+echo "--- DAG (/lineage/{run_id}/dag) ---"
+curl -s "${INGRESS_URL}/lineage/${RUN_ID}/dag?format=json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'error' in d:
+    print(f'  Error: {d[\"error\"]}')
+else:
+    s = d.get('summary', {})
+    print(f'  Nodes: {s.get(\"total_nodes\")}, Edges: {s.get(\"total_edges\")}')
+    for e in d.get('edges', []):
+        print(f'    {e[\"source\"]} -> {e[\"target\"]} (logical={e[\"logical_count\"]}, raw={e[\"count\"]})')
+"
 echo ""
-echo "View traces in Jaeger: http://localhost:16686"
-echo "Look for service: envoy-ingress"
+
+echo "--- Trust chain (/lineage/{run_id}/trust) ---"
+curl -s "${INGRESS_URL}/lineage/${RUN_ID}/trust?format=text"
+echo ""
+
+echo "--- Explain: mock-database (/lineage/{run_id}/explain?node=resource:mock-database) ---"
+curl -s "${INGRESS_URL}/lineage/${RUN_ID}/explain?node=resource:mock-database&format=text"
+echo ""
+
+echo "--- DAG (DOT format) ---"
+curl -s "${INGRESS_URL}/lineage/${RUN_ID}/dag?format=dot"
+echo ""
