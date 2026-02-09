@@ -1,0 +1,19 @@
+======================================================================
+TRUST ASSESSMENT
+======================================================================
+Run ID:        58c5c55f-6cbc-9cad-bb24-9a95839e9632
+Verdict:       OK
+Risk Score:    0 / 100
+Baseline Runs: 16
+
+FINDINGS: none
+
+
+CAPABILITY ALIGNMENT (4 agents):
+----------------------------------------------------------------------
+  agent:chat-agent: ALIGNED
+  agent:read-agent: ALIGNED
+  agent:sales-agent: ALIGNED
+  agent:summary-agent: ALIGNED
+
+======================================================================

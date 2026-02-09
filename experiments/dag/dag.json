@@ -1,0 +1,83 @@
+{
+  "run_id": "008b4fd3-b760-92e2-9ea9-133a92d1f931",
+  "principal": "user:outsider-1770451034",
+  "nodes": [
+    {
+      "id": "agent:chat-agent",
+      "type": "agent",
+      "label": "chat-agent"
+    },
+    {
+      "id": "agent:read-agent",
+      "type": "agent",
+      "label": "read-agent"
+    },
+    {
+      "id": "resource:mock-database",
+      "type": "resource",
+      "label": "mock-database"
+    },
+    {
+      "id": "user:outsider-1770451034",
+      "type": "principal",
+      "label": "outsider-1770451034"
+    }
+  ],
+  "edges": [
+    {
+      "source": "agent:chat-agent",
+      "target": "agent:read-agent",
+      "hop_kind": "agent_to_agent",
+      "count": 1,
+      "logical_count": 1,
+      "span_ids": [
+        "e759b3aa5a219c8b"
+      ],
+      "first_ts": 1770451034920263,
+      "last_ts": 1770451034920263,
+      "total_duration_us": 3074
+    },
+    {
+      "source": "agent:read-agent",
+      "target": "resource:mock-database",
+      "hop_kind": "agent_to_resource",
+      "count": 1,
+      "logical_count": 1,
+      "span_ids": [
+        "cb40bfb2f44f804f"
+      ],
+      "first_ts": 1770451034922038,
+      "last_ts": 1770451034922038,
+      "total_duration_us": 744
+    },
+    {
+      "source": "user:outsider-1770451034",
+      "target": "agent:chat-agent",
+      "hop_kind": "principal_to_agent",
+      "count": 2,
+      "logical_count": 1,
+      "span_ids": [
+        "be553975c74cb4aa"
+      ],
+      "first_ts": 1770451034918308,
+      "last_ts": 1770451034918648,
+      "total_duration_us": 10598
+    }
+  ],
+  "source": "sqlite",
+  "field_descriptions": {
+    "count": "Total raw span observations for this edge",
+    "logical_count": "Number of unique span IDs observed (deduplicated)",
+    "span_ids": "List of unique span IDs that contributed to this edge",
+    "first_ts": "Timestamp (us) of the earliest span on this edge",
+    "last_ts": "Timestamp (us) of the latest span on this edge",
+    "total_duration_us": "Sum of all span durations on this edge (us)"
+  },
+  "summary": {
+    "total_nodes": 4,
+    "total_edges": 3,
+    "principals": 1,
+    "agents": 2,
+    "resources": 1
+  }
+}

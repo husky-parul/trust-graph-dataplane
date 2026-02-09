@@ -1,6 +1,7 @@
 # Kubernetes
 *.kubeconfig
 kubeconfig
+.claude/
 
 # Kind
 kind-config.yaml.local

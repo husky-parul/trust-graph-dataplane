@@ -1,0 +1,29 @@
+======================================================================
+TRUST ASSESSMENT
+======================================================================
+Run ID:        008b4fd3-b760-92e2-9ea9-133a92d1f931
+Verdict:       OK
+Risk Score:    25 / 100
+Baseline Runs: 16
+
+FINDINGS (2):
+----------------------------------------------------------------------
+  1. [novel_edge] +15pts
+     Edge user:outsider-1770451034 -> agent:chat-agent (principal_to_agent) never seen in 16 prior runs
+     edge: user:outsider-1770451034 -> agent:chat-agent (principal_to_agent)
+     spans: be553975c74cb4aa
+  2. [novel_path] +10pts
+     Delegation path user:outsider-1770451034 -> agent:chat-agent -> agent:read-agent -> resource:mock-database never seen in 16 prior runs
+     path: user:outsider-1770451034 -> agent:chat-agent -> agent:read-agent -> resource:mock-database
+
+NOVEL EDGES (1):
+  user:outsider-1770451034 -> agent:chat-agent (principal_to_agent)
+NOVEL PATHS (1):
+  user:outsider-1770451034 -> agent:chat-agent -> agent:read-agent -> resource:mock-database
+
+CAPABILITY ALIGNMENT (2 agents):
+----------------------------------------------------------------------
+  agent:chat-agent: ALIGNED
+  agent:read-agent: ALIGNED
+
+======================================================================

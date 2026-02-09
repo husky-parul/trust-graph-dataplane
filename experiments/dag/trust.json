@@ -1,0 +1,57 @@
+{
+  "run_id": "008b4fd3-b760-92e2-9ea9-133a92d1f931",
+  "type": "topologically_ordered_event_list",
+  "description": "All causal hops in temporal order. Duplicate edges from different delegation paths appear separately.",
+  "principal": "user:outsider-1770451034",
+  "total_events": 3,
+  "agents_involved": [
+    "agent:chat-agent",
+    "agent:read-agent"
+  ],
+  "resources_accessed": [
+    "resource:mock-database"
+  ],
+  "source": "sqlite",
+  "field_descriptions": {
+    "span_duration_us": "Duration of this edge (from SQLite, may be aggregated)",
+    "causal_path": "Full delegation chain from principal to this hop's target"
+  },
+  "trust_chain": [
+    {
+      "step": 1,
+      "hop_kind": "principal_to_agent",
+      "source": "user:outsider-1770451034",
+      "target": "agent:chat-agent",
+      "span_duration_us": 10598,
+      "causal_path": [
+        "user:outsider-1770451034",
+        "agent:chat-agent"
+      ]
+    },
+    {
+      "step": 2,
+      "hop_kind": "agent_to_agent",
+      "source": "agent:chat-agent",
+      "target": "agent:read-agent",
+      "span_duration_us": 3074,
+      "causal_path": [
+        "user:outsider-1770451034",
+        "agent:chat-agent",
+        "agent:read-agent"
+      ]
+    },
+    {
+      "step": 3,
+      "hop_kind": "agent_to_resource",
+      "source": "agent:read-agent",
+      "target": "resource:mock-database",
+      "span_duration_us": 744,
+      "causal_path": [
+        "user:outsider-1770451034",
+        "agent:chat-agent",
+        "agent:read-agent",
+        "resource:mock-database"
+      ]
+    }
+  ]
+}
