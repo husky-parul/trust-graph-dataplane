@@ -19,6 +19,8 @@ data:
     JAEGER_URL = os.environ.get("JAEGER_URL", "http://jaeger.observability.svc.cluster.local:16686")
     DB_PATH = os.environ.get("DB_PATH", "/data/lineage.db")
     AGENT_CARDS_DIR = os.environ.get("AGENT_CARDS_DIR", "/agent-cards")
+    UI_DIR = os.environ.get("UI_DIR", "/ui-files")
+    MIME_TYPES = {'.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css'}
 
     def init_db():
         """Initialize SQLite database with schema. Safe to call multiple times."""
@@ -820,10 +822,33 @@ data:
             elif len(path_parts) == 2 and path_parts[0] == "agent-cards":
                 agent_id = urllib.parse.unquote(path_parts[1])
                 self.handle_get_agent_card(agent_id)
+            elif parsed.path in ("/ui", "/ui/"):
+                self.handle_static("index.html")
+            elif path_parts[0] == "ui" and len(path_parts) == 2:
+                self.handle_static(path_parts[1])
             elif parsed.path == "/health":
                 self.send_json({"status": "ok"})
             else:
-                self.send_json({"error": "Endpoints: /lineage/all, /lineage/{run_id}, /lineage/{run_id}/trust, /lineage/{run_id}/dag, /lineage/{run_id}/explain?node=..., /lineage/{run_id}/assess, /agent-cards, /agent-cards/{agent_id}"}, 400)
+                self.send_json({"error": "Endpoints: /lineage/all, /lineage/{run_id}, /lineage/{run_id}/trust, /lineage/{run_id}/dag, /lineage/{run_id}/explain?node=..., /lineage/{run_id}/assess, /agent-cards, /agent-cards/{agent_id}, /ui"}, 400)
+
+        def handle_static(self, filename):
+            """Serve a static file from UI_DIR."""
+            safe = os.path.basename(filename)
+            filepath = os.path.join(UI_DIR, safe)
+            if not os.path.isfile(filepath):
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Not found")
+                return
+            ext = os.path.splitext(safe)[1]
+            content_type = MIME_TYPES.get(ext, 'application/octet-stream')
+            with open(filepath, 'rb') as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def handle_all_traces(self, output_format):
             """List all available trace IDs from Jaeger (envoy-ingress only)."""
@@ -1939,6 +1964,8 @@ spec:
               value: "/data/lineage.db"
             - name: AGENT_CARDS_DIR
               value: "/agent-cards"
+            - name: UI_DIR
+              value: "/ui-files"
           volumeMounts:
             - name: config
               mountPath: /app
@@ -1946,6 +1973,8 @@ spec:
               mountPath: /data
             - name: agent-cards
               mountPath: /agent-cards
+            - name: ui-files
+              mountPath: /ui-files
       volumes:
         - name: config
           configMap:
@@ -1956,6 +1985,9 @@ spec:
         - name: agent-cards
           configMap:
             name: agent-cards-config
+        - name: ui-files
+          configMap:
+            name: lineage-ui-config
 ---
 apiVersion: v1
 kind: Service

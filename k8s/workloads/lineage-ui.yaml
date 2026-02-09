@@ -1,0 +1,924 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lineage-ui-config
+  namespace: workloads
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Trust DAG</title>
+      <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+      <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+      <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+      <link rel="stylesheet" href="/ui/style.css">
+    </head>
+    <body>
+      <!-- TOP BAR -->
+      <div id="top-bar">
+        <div id="top-left">
+          <span class="logo">Trust DAG</span>
+          <input id="run-input" type="text" placeholder="Paste run_id or click a run below...">
+          <button id="load-btn" onclick="app.loadRun()">Load</button>
+        </div>
+        <div id="badges">
+          <span id="badge-principal" class="badge hidden"></span>
+          <span id="badge-verdict" class="badge hidden"></span>
+          <span id="badge-score" class="badge hidden"></span>
+          <span id="badge-baseline" class="badge hidden"></span>
+        </div>
+      </div>
+
+      <!-- RUN CHIPS -->
+      <div id="run-chips"></div>
+
+      <!-- MAIN LAYOUT: graph left, detail panel right -->
+      <div id="main">
+        <div id="graph-container">
+          <div id="cy"></div>
+          <div id="graph-empty">Select a run above to visualize the Trust DAG</div>
+          <div id="graph-hint" class="hidden">Click any node or edge in the graph for details</div>
+        </div>
+
+        <!-- RIGHT PANEL: detail panel with tabs -->
+        <div id="detail-panel" class="hidden">
+          <div id="panel-header">
+            <span id="panel-title">Details</span>
+          </div>
+
+          <!-- Tab buttons -->
+          <div id="panel-tabs">
+            <button class="tab active" data-tab="explain" onclick="app.switchTab('explain')">Explain</button>
+            <button class="tab" data-tab="edge" onclick="app.switchTab('edge')">Edge</button>
+            <button class="tab" data-tab="paths" onclick="app.switchTab('paths')">Paths</button>
+            <button class="tab" data-tab="assess" onclick="app.switchTab('assess')">Assessment</button>
+          </div>
+
+          <!-- Tab contents -->
+          <div id="tab-explain" class="tab-content active">
+            <div class="tab-placeholder">Click a node to see why it was accessed</div>
+          </div>
+          <div id="tab-edge" class="tab-content">
+            <div class="tab-placeholder">Click an edge to see call details</div>
+          </div>
+          <div id="tab-paths" class="tab-content">
+            <div class="tab-placeholder">Click a node to see delegation paths</div>
+          </div>
+          <div id="tab-assess" class="tab-content">
+            <div class="tab-placeholder">Load a run to see assessment</div>
+          </div>
+        </div>
+      </div>
+
+      <script src="/ui/app.js"></script>
+    </body>
+    </html>
+  style.css: |
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+      background: #1a1a2e; color: #e0e0e0;
+      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* TOP BAR */
+    #top-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 16px; background: #16213e;
+      border-bottom: 1px solid #0f3460; min-height: 48px;
+    }
+    #top-left { display: flex; align-items: center; gap: 12px; }
+    .logo { font-weight: 700; font-size: 16px; color: #4a90d9; white-space: nowrap; }
+    #run-input {
+      background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0;
+      padding: 6px 10px; border-radius: 4px; width: 340px;
+      font-family: monospace; font-size: 13px;
+    }
+    #run-input:focus { outline: none; border-color: #4a90d9; }
+    #load-btn {
+      background: #0f3460; color: #e0e0e0; border: 1px solid #4a90d9;
+      padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 13px;
+    }
+    #load-btn:hover { background: #4a90d9; color: #fff; }
+
+    /* BADGES */
+    #badges { display: flex; gap: 8px; align-items: center; }
+    .badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .badge.hidden { display: none; }
+    .badge-principal { background: #4a90d9; color: #fff; }
+    .badge-ok { background: #27ae60; color: #fff; }
+    .badge-warn { background: #f39c12; color: #1a1a2e; }
+    .badge-high { background: #e74c3c; color: #fff; }
+    .badge-score { background: #2c3e50; color: #e0e0e0; border: 1px solid #4a90d9; }
+    .badge-baseline { background: #2c3e50; color: #95a5a6; border: 1px solid #7f8c8d; }
+
+    /* RUN CHIPS */
+    #run-chips {
+      display: flex; gap: 6px; padding: 6px 16px; background: #16213e;
+      border-bottom: 1px solid #0f3460; flex-wrap: wrap;
+      overflow-y: auto; max-height: 64px;
+    }
+    .run-chip {
+      padding: 3px 10px; border-radius: 12px; font-size: 11px;
+      font-family: monospace; cursor: pointer; background: #1a1a2e;
+      border: 1px solid #0f3460; color: #95a5a6; white-space: nowrap;
+    }
+    .run-chip:hover { border-color: #4a90d9; color: #e0e0e0; }
+    .run-chip.active { border-color: #4a90d9; color: #4a90d9; background: #0f3460; }
+
+    /* MAIN LAYOUT */
+    #main { display: flex; flex: 1; overflow: hidden; }
+    #graph-container { flex: 1; position: relative; min-width: 0; }
+    #cy { width: 100%; height: 100%; }
+    #graph-empty {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%); color: #555; font-size: 16px;
+      pointer-events: none;
+    }
+    #graph-hint {
+      position: absolute; bottom: 12px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15,52,96,0.9); color: #95a5a6;
+      padding: 6px 16px; border-radius: 16px; font-size: 12px;
+      pointer-events: none;
+    }
+    #graph-hint.hidden { display: none; }
+
+    /* DETAIL PANEL (right side) */
+    #detail-panel {
+      width: 420px; min-width: 420px; background: #16213e;
+      border-left: 2px solid #0f3460;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #detail-panel.hidden { display: none; }
+    #panel-header {
+      padding: 10px 14px; border-bottom: 1px solid #0f3460;
+      background: #0f3460;
+    }
+    #panel-title {
+      font-size: 14px; font-weight: 600; color: #4a90d9;
+    }
+
+    /* TABS */
+    #panel-tabs { display: flex; border-bottom: 1px solid #0f3460; }
+    .tab {
+      flex: 1; padding: 8px 4px; background: transparent; border: none;
+      color: #555; cursor: pointer; font-size: 12px; font-weight: 600;
+      border-bottom: 2px solid transparent; transition: all 0.15s;
+    }
+    .tab.active { color: #4a90d9; border-bottom-color: #4a90d9; }
+    .tab:hover { color: #e0e0e0; }
+    .tab-content { display: none; flex: 1; overflow-y: auto; padding: 14px; }
+    .tab-content.active { display: block; }
+    .tab-placeholder { color: #555; font-style: italic; padding: 24px 0; text-align: center; font-size: 13px; }
+
+    /* EXPLAIN */
+    .explain-section { margin-bottom: 16px; }
+    .explain-section h3 {
+      font-size: 12px; color: #4a90d9; margin-bottom: 6px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .explain-answer {
+      background: #1a1a2e; padding: 10px; border-radius: 4px;
+      font-size: 12px; line-height: 1.6; border: 1px solid #0f3460;
+      white-space: pre-wrap;
+    }
+    .chain-item {
+      padding: 6px 10px; margin: 3px 0; background: #1a1a2e;
+      border-radius: 3px; font-size: 12px; border-left: 3px solid #4a90d9;
+    }
+    .chain-item .hop-kind { color: #7f8c8d; font-size: 11px; margin-left: 6px; }
+    .accessor-tag {
+      display: inline-block; padding: 3px 10px; margin: 2px;
+      border-radius: 3px; font-size: 12px; background: #0f3460; color: #5cb85c;
+    }
+
+    /* EDGE DETAIL */
+    .edge-detail-row {
+      display: flex; justify-content: space-between; padding: 8px 0;
+      border-bottom: 1px solid #0f3460; font-size: 12px;
+    }
+    .edge-detail-row .label { color: #95a5a6; }
+    .edge-detail-row .value { color: #e0e0e0; font-family: monospace; text-align: right; }
+    .span-id {
+      font-family: monospace; font-size: 11px; color: #4a90d9;
+      cursor: pointer; display: block; padding: 3px 0;
+    }
+    .span-id:hover { text-decoration: underline; }
+
+    /* PATHS */
+    .path-item {
+      padding: 8px 10px; margin: 4px 0; background: #1a1a2e;
+      border-radius: 4px; font-size: 12px; cursor: pointer;
+      border: 1px solid #0f3460; line-height: 1.5;
+    }
+    .path-item:hover { border-color: #4a90d9; }
+    .path-item.spotlight { border-color: #f39c12; background: #2c2c1a; }
+    .novel-badge {
+      background: #f39c12; color: #1a1a2e; font-size: 10px;
+      padding: 1px 6px; border-radius: 8px; margin-left: 6px; font-weight: 700;
+    }
+
+    /* ASSESS */
+    .finding-item {
+      padding: 8px 10px; margin: 4px 0; background: #1a1a2e;
+      border-radius: 3px; font-size: 12px; border-left: 3px solid #e74c3c;
+    }
+    .finding-item .rule { font-weight: 600; color: #e74c3c; }
+    .finding-item .score { color: #f39c12; margin-left: 6px; font-size: 11px; }
+    .finding-item .detail { color: #95a5a6; margin-top: 4px; font-size: 11px; }
+    .cap-item { padding: 6px 10px; margin: 3px 0; border-radius: 3px; font-size: 12px; }
+    .cap-aligned { background: #1a2e1a; border-left: 3px solid #27ae60; }
+    .cap-overreach { background: #2e1a1a; border-left: 3px solid #e74c3c; }
+    .cap-unknown { background: #1a1a2e; border-left: 3px solid #7f8c8d; }
+    .novel-edge-item {
+      padding: 6px 10px; margin: 3px 0; background: #2e2a1a;
+      border-radius: 3px; font-size: 12px; border-left: 3px solid #f39c12;
+    }
+    .novel-path-item {
+      padding: 6px 10px; margin: 3px 0; background: #2e2a1a;
+      border-radius: 3px; font-size: 12px; border-left: 3px solid #f39c12;
+    }
+    .copy-btn {
+      background: #0f3460; color: #95a5a6; border: 1px solid #0f3460;
+      padding: 3px 10px; border-radius: 3px; cursor: pointer; font-size: 11px;
+      float: right;
+    }
+    .copy-btn:hover { color: #e0e0e0; border-color: #4a90d9; }
+    .parallel-group {
+      border: 1px dashed #f39c12; border-radius: 4px;
+      padding: 8px; margin: 8px 0;
+    }
+    .parallel-label { font-size: 11px; color: #f39c12; margin-bottom: 4px; font-weight: 600; }
+    .verdict-banner {
+      padding: 10px 14px; border-radius: 4px; margin-bottom: 12px;
+      font-size: 13px; font-weight: 600;
+    }
+    .verdict-ok { background: #1a2e1a; border: 1px solid #27ae60; color: #27ae60; }
+    .verdict-warn { background: #2e2a0a; border: 1px solid #f39c12; color: #f39c12; }
+    .verdict-high { background: #2e1a1a; border: 1px solid #e74c3c; color: #e74c3c; }
+  app.js: |
+    const app = {
+      state: {
+        runId: null,
+        dagData: null,
+        assessData: null,
+        selectedNode: null,
+        selectedEdge: null,
+        explainCache: {},
+        activeTab: 'explain',
+        spotlightPath: null,
+        runs: [],
+      },
+      cy: null,
+      JAEGER_URL: 'http://localhost:16686',
+
+      async init() {
+        this.cy = cytoscape({
+          container: document.getElementById('cy'),
+          style: this.getCyStyle(),
+          layout: { name: 'preset' },
+          minZoom: 0.3,
+          maxZoom: 3,
+          wheelSensitivity: 0.3,
+        });
+        this.cy.on('tap', 'node', (e) => this.onNodeClick(e.target.id()));
+        this.cy.on('tap', 'edge', (e) => this.onEdgeClick(e.target.data()));
+        this.cy.on('tap', (e) => { if (e.target === this.cy) this.clearSelection(); });
+        document.getElementById('run-input').addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') this.loadRun();
+        });
+        await this.fetchRuns();
+      },
+
+      getCyStyle() {
+        return [
+          { selector: 'node', style: {
+            'label': 'data(label)', 'text-valign': 'center', 'text-halign': 'center',
+            'font-size': '12px', 'color': '#e0e0e0', 'text-wrap': 'wrap',
+            'text-max-width': '120px', 'width': 'label', 'height': 'label',
+            'padding': '14px', 'border-width': 2,
+          }},
+          { selector: 'node[type="principal"]', style: {
+            'shape': 'ellipse', 'background-color': '#1a3a6e',
+            'border-color': '#4a90d9', 'color': '#4a90d9',
+          }},
+          { selector: 'node[type="agent"]', style: {
+            'shape': 'round-rectangle', 'background-color': '#1a3e1a',
+            'border-color': '#5cb85c', 'color': '#5cb85c',
+          }},
+          { selector: 'node[type="resource"]', style: {
+            'shape': 'barrel', 'background-color': '#3e2a0a',
+            'border-color': '#e67e22', 'color': '#e67e22',
+          }},
+          { selector: 'node:selected', style: {
+            'border-width': 4, 'overlay-opacity': 0.15, 'overlay-color': '#4a90d9',
+          }},
+          { selector: 'edge', style: {
+            'width': 2, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
+            'target-arrow-color': 'data(color)', 'line-color': 'data(color)',
+            'label': 'data(edgeLabel)', 'font-size': '10px', 'color': '#95a5a6',
+            'text-rotation': 'autorotate', 'text-background-color': '#1a1a2e',
+            'text-background-opacity': 0.8, 'text-background-padding': '2px',
+            'arrow-scale': 1.2,
+          }},
+          { selector: 'edge.thick', style: { 'width': 4 }},
+          { selector: 'edge.novel', style: {
+            'line-style': 'dashed', 'line-dash-pattern': [6, 3],
+          }},
+          { selector: 'edge.dimmed', style: { 'opacity': 0.15 }},
+          { selector: 'node.dimmed', style: { 'opacity': 0.3 }},
+          { selector: 'edge.highlighted', style: { 'width': 5, 'opacity': 1 }},
+          { selector: 'node.highlighted', style: { 'opacity': 1, 'border-width': 4 }},
+        ];
+      },
+
+      hopColor(hopKind) {
+        switch (hopKind) {
+          case 'principal_to_agent': return '#4a90d9';
+          case 'agent_to_agent': return '#5cb85c';
+          case 'agent_to_resource': return '#e67e22';
+          default: return '#7f8c8d';
+        }
+      },
+
+      /* ── Run list ── */
+
+      async fetchRuns() {
+        try {
+          const resp = await fetch('/lineage/all?format=json');
+          const data = await resp.json();
+          this.state.runs = data.runs || [];
+          this.renderRunChips();
+        } catch (e) {
+          console.error('Failed to fetch runs:', e);
+        }
+      },
+
+      renderRunChips() {
+        const container = document.getElementById('run-chips');
+        if (!this.state.runs.length) {
+          container.innerHTML = '<span style="color:#555;font-size:12px;">No runs found. Send a request through the ingress first.</span>';
+          return;
+        }
+        container.innerHTML = this.state.runs.map(r => {
+          const short = r.run_id.substring(0, 12);
+          const active = r.run_id === this.state.runId ? 'active' : '';
+          const principal = r.principal ? r.principal.replace('user:', '') : '?';
+          return `<span class="run-chip ${active}" onclick="app.selectRun('${r.run_id}')" title="${r.run_id}\nPrincipal: ${r.principal}\nSpans: ${r.total_spans}">${principal}/${short}...</span>`;
+        }).join('');
+      },
+
+      selectRun(runId) {
+        document.getElementById('run-input').value = runId;
+        this.loadRun();
+      },
+
+      /* ── Load run ── */
+
+      async loadRun() {
+        const input = document.getElementById('run-input');
+        const runId = input.value.trim();
+        if (!runId) return;
+
+        this.state.runId = runId;
+        this.state.explainCache = {};
+        this.state.spotlightPath = null;
+        this.state.selectedNode = null;
+        this.state.selectedEdge = null;
+
+        document.getElementById('graph-empty').style.display = 'none';
+        document.getElementById('graph-hint').classList.remove('hidden');
+        this.renderRunChips();
+
+        try {
+          const [dagResp, assessResp] = await Promise.all([
+            fetch(`/lineage/${encodeURIComponent(runId)}/dag?format=json`),
+            fetch(`/lineage/${encodeURIComponent(runId)}/assess`).catch(() => null),
+          ]);
+
+          this.state.dagData = await dagResp.json();
+          if (assessResp && assessResp.ok) {
+            this.state.assessData = await assessResp.json();
+          } else {
+            this.state.assessData = null;
+          }
+
+          if (this.state.dagData.error) {
+            document.getElementById('graph-empty').style.display = 'block';
+            document.getElementById('graph-empty').textContent = this.state.dagData.error;
+            document.getElementById('graph-hint').classList.add('hidden');
+            return;
+          }
+
+          this.renderBadges();
+          this.renderGraph();
+          this.showDetailPanel();
+          this.renderAssessTab();
+          this.autoSelectNode();
+        } catch (e) {
+          document.getElementById('graph-empty').style.display = 'block';
+          document.getElementById('graph-empty').textContent = 'Error: ' + e.message;
+          document.getElementById('graph-hint').classList.add('hidden');
+        }
+      },
+
+      /* ── Badges ── */
+
+      renderBadges() {
+        const dag = this.state.dagData;
+        const assess = this.state.assessData;
+
+        const bp = document.getElementById('badge-principal');
+        bp.textContent = (dag.principal || 'unknown').replace('user:', '');
+        bp.className = 'badge badge-principal';
+
+        if (assess && !assess.error) {
+          const bv = document.getElementById('badge-verdict');
+          bv.textContent = assess.verdict.toUpperCase();
+          bv.className = `badge badge-${assess.verdict}`;
+
+          const bs = document.getElementById('badge-score');
+          bs.textContent = `Score: ${assess.risk_score}`;
+          bs.className = 'badge badge-score';
+
+          const bb = document.getElementById('badge-baseline');
+          bb.textContent = `${assess.baseline_runs} prior runs`;
+          bb.className = 'badge badge-baseline';
+        } else {
+          document.getElementById('badge-verdict').className = 'badge hidden';
+          document.getElementById('badge-score').className = 'badge hidden';
+          document.getElementById('badge-baseline').className = 'badge hidden';
+        }
+      },
+
+      /* ── Graph ── */
+
+      renderGraph() {
+        const dag = this.state.dagData;
+        const novelEdges = (this.state.assessData && this.state.assessData.novel_edges) || [];
+        const elements = [];
+
+        for (const node of dag.nodes) {
+          elements.push({
+            data: { id: node.id, label: node.label, type: node.type },
+          });
+        }
+
+        for (const edge of dag.edges) {
+          const count = edge.count || edge.logical_count || 1;
+          const isNovel = novelEdges.some(n =>
+            n.source === edge.source && n.target === edge.target);
+          let edgeLabel = count > 1 ? `x${count}` : '';
+          if (count > 1 && edge.first_ts && edge.last_ts) {
+            const spanMs = (edge.last_ts - edge.first_ts) / 1000;
+            if (spanMs < 5000 && count > 1) edgeLabel += ' \u21bb';
+          }
+          const classes = [];
+          if (count > 2) classes.push('thick');
+          if (isNovel) classes.push('novel');
+
+          elements.push({
+            data: {
+              id: `${edge.source}->${edge.target}`,
+              source: edge.source,
+              target: edge.target,
+              color: this.hopColor(edge.hop_kind),
+              edgeLabel: edgeLabel,
+              hopKind: edge.hop_kind,
+              count: count,
+              spanIds: edge.span_ids || [],
+              firstTs: edge.first_ts,
+              lastTs: edge.last_ts,
+              durationUs: edge.total_duration_us,
+              isNovel: isNovel,
+            },
+            classes: classes.join(' '),
+          });
+        }
+
+        this.cy.elements().remove();
+        this.cy.add(elements);
+        this.cy.layout({
+          name: 'dagre',
+          rankDir: 'LR',
+          nodeSep: 60,
+          rankSep: 120,
+          edgeSep: 30,
+          padding: 40,
+        }).run();
+        this.cy.fit(undefined, 50);
+      },
+
+      showDetailPanel() {
+        document.getElementById('detail-panel').classList.remove('hidden');
+      },
+
+      autoSelectNode() {
+        const dag = this.state.dagData;
+        const resourceNode = dag.nodes.find(n => n.type === 'resource');
+        if (resourceNode) {
+          this.onNodeClick(resourceNode.id);
+        } else {
+          const agentNode = dag.nodes.find(n => n.type === 'agent');
+          if (agentNode) this.onNodeClick(agentNode.id);
+        }
+      },
+
+      /* ── Node click ── */
+
+      async onNodeClick(nodeId) {
+        this.state.selectedNode = nodeId;
+        this.state.selectedEdge = null;
+        this.state.spotlightPath = null;
+        this.switchTab('explain');
+
+        // Update panel header
+        const nodeType = (this.state.dagData.nodes.find(n => n.id === nodeId) || {}).type || '?';
+        document.getElementById('panel-title').textContent = `${nodeId}`;
+        document.getElementById('graph-hint').classList.add('hidden');
+
+        // Highlight in graph
+        this.cy.elements().removeClass('dimmed highlighted');
+        const node = this.cy.getElementById(nodeId);
+        if (node.length) {
+          node.select();
+          const connected = node.connectedEdges();
+          connected.addClass('highlighted');
+          connected.connectedNodes().addClass('highlighted');
+          node.addClass('highlighted');
+        }
+
+        // Check cache
+        if (this.state.explainCache[nodeId]) {
+          this.renderExplain(this.state.explainCache[nodeId]);
+          this.renderPaths(this.state.explainCache[nodeId]);
+          return;
+        }
+
+        document.getElementById('tab-explain').innerHTML = '<div class="tab-placeholder">Loading explain data...</div>';
+        document.getElementById('tab-paths').innerHTML = '<div class="tab-placeholder">Loading paths...</div>';
+
+        try {
+          const resp = await fetch(`/lineage/${encodeURIComponent(this.state.runId)}/explain?node=${encodeURIComponent(nodeId)}&format=json`);
+          const data = await resp.json();
+          this.state.explainCache[nodeId] = data;
+          this.renderExplain(data);
+          this.renderPaths(data);
+        } catch (e) {
+          document.getElementById('tab-explain').innerHTML = `<div class="tab-placeholder">Error loading explain: ${e.message}</div>`;
+        }
+      },
+
+      /* ── Edge click ── */
+
+      onEdgeClick(edgeData) {
+        this.state.selectedEdge = edgeData;
+        this.state.selectedNode = null;
+        this.state.spotlightPath = null;
+        this.switchTab('edge');
+
+        document.getElementById('panel-title').textContent = `${edgeData.source} \u2192 ${edgeData.target}`;
+        document.getElementById('graph-hint').classList.add('hidden');
+
+        this.cy.elements().removeClass('dimmed highlighted');
+        const edge = this.cy.getElementById(edgeData.id);
+        if (edge.length) {
+          edge.addClass('highlighted');
+          edge.source().addClass('highlighted');
+          edge.target().addClass('highlighted');
+        }
+        this.renderEdgeDetail(edgeData);
+      },
+
+      clearSelection() {
+        this.state.selectedNode = null;
+        this.state.selectedEdge = null;
+        this.state.spotlightPath = null;
+        this.cy.elements().removeClass('dimmed highlighted');
+        document.getElementById('panel-title').textContent = 'Details';
+        document.getElementById('graph-hint').classList.remove('hidden');
+      },
+
+      /* ── Tabs ── */
+
+      switchTab(tabName) {
+        this.state.activeTab = tabName;
+        document.querySelectorAll('#panel-tabs .tab').forEach(t =>
+          t.classList.toggle('active', t.dataset.tab === tabName));
+        document.querySelectorAll('.tab-content').forEach(tc =>
+          tc.classList.toggle('active', tc.id === `tab-${tabName}`));
+      },
+
+      /* ── Render: Explain tab ── */
+
+      renderExplain(data) {
+        const el = document.getElementById('tab-explain');
+        if (data.error) {
+          el.innerHTML = `<div class="tab-placeholder">${this.escapeHtml(data.error)}</div>`;
+          return;
+        }
+
+        let html = '';
+
+        // Answer string (most important)
+        if (data.answer) {
+          html += `<div class="explain-section">
+            <h3>Answer <button class="copy-btn" onclick="app.copyJson()">Copy JSON</button></h3>
+            <div class="explain-answer">${this.escapeHtml(data.answer)}</div>
+          </div>`;
+        }
+
+        // Target
+        html += `<div class="explain-section">
+          <h3>Target</h3>
+          <div style="font-size:13px;padding:4px 0;">
+            ${this.escapeHtml(data.target)}
+            <span style="color:#95a5a6">(${this.escapeHtml(data.target_type || '?')})</span>
+          </div>
+        </div>`;
+
+        // Direct accessors
+        if (data.direct_accessors && data.direct_accessors.length) {
+          html += `<div class="explain-section"><h3>Direct Accessors</h3><div>`;
+          data.direct_accessors.forEach(a => {
+            html += `<span class="accessor-tag">${this.escapeHtml(a)}</span>`;
+          });
+          html += `</div></div>`;
+        }
+
+        // Delegation chains (cause_groups)
+        if (data.cause_groups && data.cause_groups.length) {
+          html += `<div class="explain-section"><h3>Delegation Chains (${data.cause_groups.length})</h3>`;
+          data.cause_groups.forEach((cg, i) => {
+            html += `<div style="margin:10px 0; padding:8px; background:#111128; border-radius:4px;">`;
+            html += `<div style="font-size:12px;color:#5cb85c;margin-bottom:6px;font-weight:600;">
+              ${this.escapeHtml(cg.accessor)}
+              <span style="color:#7f8c8d;font-weight:normal">${cg.hop_kind} &middot; x${cg.span_count || 1}</span>
+            </div>`;
+            if (cg.delegated_by && cg.delegated_by.length) {
+              html += `<div style="margin-left:8px;">`;
+              cg.delegated_by.forEach(d => {
+                html += `<div class="chain-item">
+                  ${this.escapeHtml(d.actor)}
+                  <span class="hop-kind">${this.escapeHtml(d.hop_kind)}</span>
+                </div>`;
+              });
+              html += `</div>`;
+            }
+            html += `</div>`;
+          });
+          html += `</div>`;
+        }
+
+        // Parallel groups
+        if (data.parallel_groups && data.parallel_groups.length) {
+          html += `<div class="explain-section"><h3>Parallel Execution</h3>`;
+          data.parallel_groups.forEach(pg => {
+            html += `<div class="parallel-group">
+              <div class="parallel-label">Concurrent (within ${pg.window_ms || '?'}ms)</div>`;
+            if (pg.members) {
+              pg.members.forEach(m => {
+                html += `<div class="chain-item">
+                  ${this.escapeHtml(m.accessor || m)}
+                  ${m.hop_kind ? `<span class="hop-kind">${m.hop_kind}</span>` : ''}
+                </div>`;
+              });
+            }
+            html += `</div>`;
+          });
+          html += `</div>`;
+        }
+
+        el.innerHTML = html;
+      },
+
+      /* ── Render: Edge detail tab ── */
+
+      renderEdgeDetail(edgeData) {
+        const el = document.getElementById('tab-edge');
+        const firstTs = edgeData.firstTs ? new Date(edgeData.firstTs / 1000).toISOString() : 'N/A';
+        const lastTs = edgeData.lastTs ? new Date(edgeData.lastTs / 1000).toISOString() : 'N/A';
+        const durationMs = edgeData.durationUs ? (edgeData.durationUs / 1000).toFixed(1) : 'N/A';
+        const spanMs = (edgeData.firstTs && edgeData.lastTs)
+          ? ((edgeData.lastTs - edgeData.firstTs) / 1000).toFixed(1) : null;
+        const isRetry = edgeData.count > 1 && spanMs && parseFloat(spanMs) < 5000;
+
+        let html = `
+          <div class="explain-section">
+            <h3>${this.escapeHtml(edgeData.source)} &rarr; ${this.escapeHtml(edgeData.target)}</h3>
+          </div>
+          <div class="edge-detail-row"><span class="label">Hop Kind</span><span class="value" style="color:${edgeData.color}">${edgeData.hopKind}</span></div>
+          <div class="edge-detail-row"><span class="label">Call Count</span><span class="value">${edgeData.count}${isRetry ? ' \u21bb retry' : ''}</span></div>
+          <div class="edge-detail-row"><span class="label">First Seen</span><span class="value">${firstTs}</span></div>
+          <div class="edge-detail-row"><span class="label">Last Seen</span><span class="value">${lastTs}</span></div>
+          <div class="edge-detail-row"><span class="label">Total Duration</span><span class="value">${durationMs} ms</span></div>
+        `;
+
+        if (edgeData.isNovel) {
+          html += `<div class="edge-detail-row"><span class="label">Novelty</span><span class="value"><span class="novel-badge">NOVEL EDGE</span></span></div>`;
+        }
+
+        if (edgeData.spanIds && edgeData.spanIds.length) {
+          html += `<div class="explain-section" style="margin-top:14px;">
+            <h3>Span IDs (${edgeData.spanIds.length})</h3>`;
+          edgeData.spanIds.forEach(sid => {
+            const traceUrl = `${this.JAEGER_URL}/trace/${sid}`;
+            html += `<a class="span-id" href="${traceUrl}" target="_blank" title="Open in Jaeger">${sid}</a>`;
+          });
+          html += `</div>`;
+        }
+
+        el.innerHTML = html;
+      },
+
+      /* ── Render: Paths tab ── */
+
+      renderPaths(data) {
+        const el = document.getElementById('tab-paths');
+        if (!data.cause_groups || !data.cause_groups.length) {
+          el.innerHTML = '<div class="tab-placeholder">No delegation paths found for this node</div>';
+          return;
+        }
+
+        const novelPaths = (this.state.assessData && this.state.assessData.novel_paths) || [];
+
+        let html = `<div class="explain-section">
+          <h3>All Paths to Principal (${data.cause_groups.length})</h3>
+          <div style="color:#7f8c8d;font-size:11px;margin-bottom:8px;">Click a path to spotlight it in the graph</div>
+        </div>`;
+
+        data.cause_groups.forEach((cg, i) => {
+          if (!cg.full_path) return;
+          const isNovel = novelPaths.some(np =>
+            JSON.stringify(np) === JSON.stringify(cg.full_path));
+          const isSpotlit = this.state.spotlightPath === i;
+          const cls = isSpotlit ? 'path-item spotlight' : 'path-item';
+
+          html += `<div class="${cls}" onclick="app.toggleSpotlight(${i}, ${JSON.stringify(cg.full_path).replace(/"/g, '&quot;')})">`;
+          cg.full_path.forEach((step, j) => {
+            if (j > 0) html += ` <span style="color:#555">\u2192</span> `;
+            html += `<span>${this.escapeHtml(step)}</span>`;
+          });
+          if (isNovel) html += `<span class="novel-badge">NOVEL</span>`;
+          if (isSpotlit) html += `<span style="color:#f39c12;font-size:11px;margin-left:6px;">(click to unspotlight)</span>`;
+          html += `</div>`;
+        });
+
+        el.innerHTML = html;
+      },
+
+      toggleSpotlight(pathIndex, pathNodes) {
+        if (this.state.spotlightPath === pathIndex) {
+          // Un-spotlight
+          this.state.spotlightPath = null;
+          this.cy.elements().removeClass('dimmed highlighted');
+          if (this.state.selectedNode) {
+            const node = this.cy.getElementById(this.state.selectedNode);
+            if (node.length) {
+              node.addClass('highlighted');
+              node.connectedEdges().addClass('highlighted');
+              node.connectedEdges().connectedNodes().addClass('highlighted');
+            }
+          }
+          this.renderPaths(this.state.explainCache[this.state.selectedNode]);
+          return;
+        }
+
+        this.state.spotlightPath = pathIndex;
+        this.cy.elements().addClass('dimmed');
+
+        // Build set of edges in this path
+        const pathEdges = new Set();
+        for (let i = 0; i < pathNodes.length - 1; i++) {
+          pathEdges.add(`${pathNodes[i]}->${pathNodes[i+1]}`);
+        }
+
+        // Highlight path edges and their endpoints
+        this.cy.edges().forEach(edge => {
+          if (pathEdges.has(edge.id())) {
+            edge.removeClass('dimmed').addClass('highlighted');
+            edge.source().removeClass('dimmed').addClass('highlighted');
+            edge.target().removeClass('dimmed').addClass('highlighted');
+          }
+        });
+
+        // Ensure all path nodes are highlighted
+        pathNodes.forEach(nid => {
+          const n = this.cy.getElementById(nid);
+          if (n.length) n.removeClass('dimmed').addClass('highlighted');
+        });
+
+        this.renderPaths(this.state.explainCache[this.state.selectedNode]);
+      },
+
+      /* ── Render: Assessment tab ── */
+
+      renderAssessTab() {
+        const el = document.getElementById('tab-assess');
+        const assess = this.state.assessData;
+
+        if (!assess || assess.error) {
+          el.innerHTML = '<div class="tab-placeholder">No assessment data available</div>';
+          return;
+        }
+
+        let html = '';
+
+        // Verdict banner
+        html += `<div class="verdict-banner verdict-${assess.verdict}">
+          Verdict: ${assess.verdict.toUpperCase()} &mdash; Risk Score: ${assess.risk_score}/100
+          &mdash; Baseline: ${assess.baseline_runs} prior runs
+        </div>`;
+
+        if (assess.note) {
+          html += `<div style="color:#7f8c8d;font-size:12px;margin-bottom:12px;font-style:italic;">${this.escapeHtml(assess.note)}</div>`;
+        }
+
+        // Findings
+        const reasons = assess.reasons || [];
+        html += `<div class="explain-section"><h3>Findings (${reasons.length})</h3>`;
+        if (reasons.length === 0) {
+          html += `<div style="color:#27ae60;font-size:12px;padding:8px 0;">No anomalies detected. This run matches baseline behavior.</div>`;
+        } else {
+          reasons.forEach(r => {
+            html += `<div class="finding-item">
+              <span class="rule">${this.escapeHtml(r.rule)}</span>
+              <span class="score">+${r.score}pts</span>
+              <div class="detail">${this.escapeHtml(r.detail)}</div>
+            </div>`;
+          });
+        }
+        html += `</div>`;
+
+        // Novel edges
+        const novelEdges = assess.novel_edges || [];
+        if (novelEdges.length) {
+          html += `<div class="explain-section"><h3>Novel Edges (${novelEdges.length})</h3>`;
+          novelEdges.forEach(e => {
+            html += `<div class="novel-edge-item">${this.escapeHtml(e.source)} \u2192 ${this.escapeHtml(e.target)} <span style="color:#7f8c8d">(${e.hop_kind})</span></div>`;
+          });
+          html += `</div>`;
+        }
+
+        // Novel paths
+        const novelPaths = assess.novel_paths || [];
+        if (novelPaths.length) {
+          html += `<div class="explain-section"><h3>Novel Paths (${novelPaths.length})</h3>`;
+          novelPaths.forEach(p => {
+            html += `<div class="novel-path-item">${p.map(s => this.escapeHtml(s)).join(' \u2192 ')}</div>`;
+          });
+          html += `</div>`;
+        }
+
+        // Capability alignment
+        const caps = assess.capability_alignment || [];
+        if (caps.length) {
+          html += `<div class="explain-section"><h3>Capability Alignment (${caps.length} agents)</h3>`;
+          caps.forEach(c => {
+            const cls = c.status === 'aligned' ? 'cap-aligned' :
+                        c.status === 'overreach' ? 'cap-overreach' : 'cap-unknown';
+            html += `<div class="cap-item ${cls}">
+              <strong>${this.escapeHtml(c.agent)}</strong>: ${c.status.toUpperCase()}`;
+            if (c.status === 'overreach') {
+              html += `<div style="font-size:11px;color:#e74c3c;margin-top:2px;">
+                Declared: ${(c.declared_dependencies || []).join(', ')}<br>
+                Observed: ${(c.observed_callees || []).join(', ')}
+              </div>`;
+            }
+            if (c.status === 'unknown' && c.detail) {
+              html += `<div style="font-size:11px;color:#7f8c8d;margin-top:2px;">${this.escapeHtml(c.detail)}</div>`;
+            }
+            html += `</div>`;
+          });
+          html += `</div>`;
+        }
+
+        el.innerHTML = html;
+      },
+
+      /* ── Utilities ── */
+
+      copyJson() {
+        const data = this.state.selectedNode
+          ? this.state.explainCache[this.state.selectedNode]
+          : null;
+        if (data) {
+          navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => {
+            const btn = document.querySelector('.copy-btn');
+            if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy JSON', 1500); }
+          });
+        }
+      },
+
+      escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => app.init());

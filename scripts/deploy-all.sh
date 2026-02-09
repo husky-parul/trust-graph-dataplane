@@ -31,6 +31,9 @@ kubectl create configmap agent-cards-config \
   -n workloads --dry-run=client -o yaml > /tmp/agent-cards-cm.yaml
 kubectl apply -f /tmp/agent-cards-cm.yaml
 
+echo "Deploying UI..."
+kubectl apply -f "${K8S_DIR}/workloads/lineage-ui.yaml"
+
 echo "Deploying agent workloads..."
 kubectl apply -f "${K8S_DIR}/workloads/mock-database.yaml"
 kubectl apply -f "${K8S_DIR}/workloads/read-agent.yaml"
@@ -67,6 +70,7 @@ echo ""
 echo "Access points:"
 echo "  Envoy Ingress:    http://localhost:8080"
 echo "  Jaeger UI:        http://localhost:16686"
+echo "  Trust DAG UI:     http://localhost:8080/ui"
 echo "  Lineage (all):    http://localhost:8080/lineage/all?format=text"
 echo ""
 echo "Test with:"

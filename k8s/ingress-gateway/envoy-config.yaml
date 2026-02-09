@@ -52,6 +52,13 @@ data:
                         - name: backend
                           domains: ["*"]
                           routes:
+                            # Trust DAG UI
+                            - match:
+                                prefix: "/ui"
+                              route:
+                                cluster: lineage_service
+                              decorator:
+                                operation: "ui"
                             # Lineage service - query trust graph
                             - match:
                                 prefix: "/lineage"
