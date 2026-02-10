@@ -286,6 +286,38 @@ data:
             print(f"[lineage-service] Lazy ingest failed for {run_id}: {e}")
             return False
 
+    def sync_recent_runs():
+        """Scan Jaeger for recent runs and ingest any missing ones into SQLite."""
+        try:
+            tags_json = json.dumps({"trust.lineage": "true"})
+            encoded_tags = urllib.parse.quote(tags_json)
+            traces_url = f"{JAEGER_URL}/api/traces?service=envoy-ingress&tags={encoded_tags}&limit=100"
+            req = urllib.request.Request(traces_url)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                traces_data = json.loads(resp.read().decode())
+
+            run_ids = set()
+            for trace in traces_data.get("data", []):
+                spans = trace.get("spans", [])
+                if spans:
+                    tags = {t["key"]: t["value"] for t in spans[0].get("tags", [])}
+                    run_id = tags.get("trust.run_id")
+                    if run_id:
+                        run_ids.add(run_id)
+
+            ingested = 0
+            for run_id in run_ids:
+                if not is_ingested(run_id):
+                    try:
+                        if ingest_run(run_id):
+                            ingested += 1
+                    except Exception:
+                        pass
+            if ingested:
+                print(f"[lineage-service] sync_recent_runs: ingested {ingested} new runs")
+        except Exception as e:
+            print(f"[lineage-service] sync_recent_runs failed: {e}")
+
     def read_dag_from_sqlite(run_id):
         """Read DAG from SQLite. Returns dict or None if not found."""
         conn = get_db()
@@ -826,10 +858,20 @@ data:
                 self.handle_static("index.html")
             elif path_parts[0] == "ui" and len(path_parts) == 2:
                 self.handle_static(path_parts[1])
+            elif path_parts == ["agents"]:
+                self.handle_agents()
+            elif path_parts == ["users"]:
+                self.handle_users()
+            elif path_parts == ["system"]:
+                self.handle_system()
+            elif parsed.path in ("/dashboard", "/dashboard/"):
+                self.handle_static("dashboard.html")
+            elif path_parts[0] == "dashboard" and len(path_parts) == 2:
+                self.handle_static(path_parts[1])
             elif parsed.path == "/health":
                 self.send_json({"status": "ok"})
             else:
-                self.send_json({"error": "Endpoints: /lineage/all, /lineage/{run_id}, /lineage/{run_id}/trust, /lineage/{run_id}/dag, /lineage/{run_id}/explain?node=..., /lineage/{run_id}/assess, /agent-cards, /agent-cards/{agent_id}, /ui"}, 400)
+                self.send_json({"error": "Endpoints: /lineage/all, /lineage/{run_id}, /lineage/{run_id}/trust, /lineage/{run_id}/dag, /lineage/{run_id}/explain?node=..., /lineage/{run_id}/assess, /agent-cards, /agent-cards/{agent_id}, /agents, /users, /system, /dashboard, /ui"}, 400)
 
         def handle_static(self, filename):
             """Serve a static file from UI_DIR."""
@@ -1832,6 +1874,107 @@ data:
                 self.handle_register_agent_card()
             else:
                 self.send_json({"error": "POST endpoints: /agent-cards"}, 400)
+
+        def handle_agents(self):
+            """GET /agents - list all registered agents (alias for agent-cards data)."""
+            try:
+                conn = get_db()
+                rows = conn.execute("SELECT * FROM agent_cards ORDER BY name").fetchall()
+                conn.close()
+                agents = []
+                for row in rows:
+                    agents.append({
+                        "agent_id": row["agent_id"],
+                        "name": row["name"],
+                        "version": row["version"],
+                        "capabilities": json.loads(row["capabilities"]) if row["capabilities"] else [],
+                        "endpoints": json.loads(row["endpoints"]) if row["endpoints"] else {},
+                        "dependencies": json.loads(row["dependencies"]) if row["dependencies"] else [],
+                        "trust_metadata": json.loads(row["trust_metadata"]) if row["trust_metadata"] else {},
+                    })
+                self.send_json({"agents": agents})
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
+        def handle_users(self):
+            """GET /users - list all principals and their activity."""
+            try:
+                sync_recent_runs()
+                conn = get_db()
+                principals = conn.execute(
+                    "SELECT DISTINCT principal_id FROM runs WHERE sealed = 1 AND principal_id IS NOT NULL ORDER BY principal_id"
+                ).fetchall()
+
+                users = []
+                for p_row in principals:
+                    pid = p_row["principal_id"]
+                    # Count runs
+                    total_runs = conn.execute(
+                        "SELECT COUNT(*) as cnt FROM runs WHERE principal_id = ? AND sealed = 1",
+                        (pid,)).fetchone()["cnt"]
+
+                    # Find agents used across all runs for this principal
+                    agent_rows = conn.execute("""
+                        SELECT DISTINCT n.node_id FROM nodes n
+                        JOIN runs r ON n.run_id = r.run_id
+                        WHERE r.principal_id = ? AND n.type = 'agent'
+                        ORDER BY n.node_id""", (pid,)).fetchall()
+                    agents_used = [r["node_id"] for r in agent_rows]
+
+                    # Find resources accessed
+                    resource_rows = conn.execute("""
+                        SELECT DISTINCT n.node_id FROM nodes n
+                        JOIN runs r ON n.run_id = r.run_id
+                        WHERE r.principal_id = ? AND n.type = 'resource'
+                        ORDER BY n.node_id""", (pid,)).fetchall()
+                    resources_accessed = [r["node_id"] for r in resource_rows]
+
+                    users.append({
+                        "principal": pid,
+                        "total_runs": total_runs,
+                        "agents_used": agents_used,
+                        "resources_accessed": resources_accessed,
+                    })
+                conn.close()
+                self.send_json({"users": users})
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+
+        def handle_system(self):
+            """GET /system - system inventory: agents, resources, gateways."""
+            try:
+                conn = get_db()
+
+                # Registered agents from agent_cards
+                card_rows = conn.execute("SELECT agent_id, name, version FROM agent_cards ORDER BY name").fetchall()
+                registered = {r["agent_id"] for r in card_rows}
+                agents = []
+                for row in card_rows:
+                    agents.append({"agent_id": row["agent_id"], "name": row["name"],
+                                   "version": row["version"], "source": "registered"})
+
+                # Observed agents not in agent_cards
+                observed_rows = conn.execute(
+                    "SELECT DISTINCT node_id, label FROM nodes WHERE type = 'agent' ORDER BY node_id"
+                ).fetchall()
+                for row in observed_rows:
+                    if row["node_id"] not in registered:
+                        agents.append({"agent_id": row["node_id"], "name": row["label"],
+                                       "version": "", "source": "observed"})
+
+                # Resources
+                resource_rows = conn.execute(
+                    "SELECT DISTINCT node_id, label FROM nodes WHERE type = 'resource' ORDER BY node_id"
+                ).fetchall()
+                resources = [{"resource_id": r["node_id"], "label": r["label"]} for r in resource_rows]
+
+                # Gateways (hardcoded)
+                gateways = [{"gateway_id": "envoy-ingress", "type": "ingress"}]
+
+                conn.close()
+                self.send_json({"agents": agents, "resources": resources, "gateways": gateways})
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
 
         def handle_list_agent_cards(self):
             """GET /agent-cards - list all registered agent cards."""

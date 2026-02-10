@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trust DAG — Delegation Observability for Agentic Systems</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0d1117; color: #e6edf3;
+    height: 100vh; overflow: hidden;
+  }
+
+  /* Slide container */
+  .slide { display: none; height: 100vh; padding: 60px 80px; flex-direction: column; }
+  .slide.active { display: flex; }
+
+  /* Navigation */
+  .nav {
+    position: fixed; bottom: 24px; right: 32px;
+    display: flex; gap: 12px; z-index: 10;
+  }
+  .nav button {
+    background: #21262d; border: 1px solid #30363d; color: #8b949e;
+    padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px;
+  }
+  .nav button:hover { background: #30363d; color: #e6edf3; }
+  .slide-num {
+    position: fixed; bottom: 28px; left: 32px;
+    color: #484f58; font-size: 14px;
+  }
+
+  /* Typography */
+  .slide-title {
+    font-size: 42px; font-weight: 700; margin-bottom: 12px;
+    line-height: 1.2;
+  }
+  .slide-subtitle {
+    font-size: 20px; color: #8b949e; margin-bottom: 44px;
+    font-weight: 400; line-height: 1.5;
+  }
+  .accent { color: #58a6ff; }
+  .green { color: #3fb950; }
+  .orange { color: #d29922; }
+  .red { color: #f85149; }
+  .dim { color: #8b949e; }
+
+  /* Two-column layout */
+  .columns { display: flex; gap: 60px; flex: 1; }
+  .col { flex: 1; }
+  .col-header {
+    font-size: 15px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.5px; margin-bottom: 20px; padding-bottom: 10px;
+    border-bottom: 2px solid #21262d;
+  }
+
+  /* List items */
+  .item {
+    padding: 12px 16px; margin-bottom: 10px;
+    border-radius: 8px; font-size: 16px; line-height: 1.5;
+  }
+  .item-has { background: #0d2818; border-left: 3px solid #3fb950; }
+  .item-gap { background: #161b22; border-left: 3px solid #58a6ff; }
+  .item-value { background: #0d1a30; border-left: 3px solid #58a6ff; }
+  .item-label {
+    font-weight: 600; font-size: 15px; margin-bottom: 2px;
+  }
+  .item-desc { color: #8b949e; font-size: 14px; }
+
+  /* Big points */
+  .big-point {
+    display: flex; align-items: flex-start; gap: 20px;
+    margin-bottom: 28px;
+  }
+  .big-num {
+    font-size: 36px; font-weight: 800; color: #58a6ff;
+    min-width: 48px; text-align: center; line-height: 1;
+    margin-top: 4px;
+  }
+  .big-text h3 { font-size: 22px; margin-bottom: 4px; }
+  .big-text p { color: #8b949e; font-size: 16px; line-height: 1.5; }
+
+  /* Properties grid for slide 3 */
+  .props-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1;
+  }
+  .prop-card {
+    background: #161b22; border: 1px solid #21262d;
+    border-radius: 8px; padding: 20px;
+  }
+  .prop-card h4 {
+    font-size: 16px; margin-bottom: 8px; display: flex;
+    align-items: center; gap: 8px;
+  }
+  .prop-card p { color: #8b949e; font-size: 14px; line-height: 1.6; }
+  .prop-icon { font-size: 20px; }
+
+  /* Architecture */
+  .arch-flow {
+    display: flex; align-items: center; justify-content: center;
+    gap: 0; margin: 28px 0;
+  }
+  .arch-box {
+    padding: 16px 24px; border-radius: 8px; text-align: center;
+    font-size: 15px; font-weight: 600; min-width: 140px;
+  }
+  .arch-arrow {
+    font-size: 24px; color: #484f58; padding: 0 8px;
+  }
+  .arch-principal { background: #0d1a30; border: 2px solid #58a6ff; color: #58a6ff; }
+  .arch-gateway { background: #1a0d30; border: 2px solid #bc8cff; color: #bc8cff; }
+  .arch-agent { background: #0d2818; border: 2px solid #3fb950; color: #3fb950; }
+  .arch-resource { background: #2a1a0a; border: 2px solid #d29922; color: #d29922; }
+  .arch-sidecar {
+    font-size: 11px; color: #8b949e; text-align: center;
+    margin-top: 4px;
+  }
+
+  .demo-steps {
+    display: flex; gap: 24px; margin-top: 20px;
+  }
+  .demo-step {
+    flex: 1; background: #161b22; border: 1px solid #21262d;
+    border-radius: 8px; padding: 20px;
+  }
+  .demo-step h4 {
+    font-size: 15px; color: #58a6ff; margin-bottom: 8px;
+  }
+  .demo-step p { font-size: 14px; color: #8b949e; line-height: 1.5; }
+  .demo-step code {
+    background: #0d1117; padding: 2px 6px; border-radius: 4px;
+    font-size: 13px; color: #e6edf3;
+  }
+
+  .oneliner {
+    margin-top: auto; padding: 20px 24px;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; font-size: 18px; line-height: 1.6;
+    text-align: center;
+  }
+
+  .logo-line {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 8px; color: #484f58; font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ SLIDE 1: Complementary Layers ═══════════════ -->
+<div class="slide active" id="slide-1">
+  <div class="logo-line">TRUST GRAPH + OPENTELEMETRY</div>
+  <div class="slide-title">Two layers of <span class="accent">agent observability</span></div>
+  <div class="slide-subtitle">Application-level tracing (MLflow, Phoenix, LangSmith) covers what happens <em>inside</em> agents.<br>We're exploring a complementary layer: what happens <em>between</em> them.</div>
+
+  <div class="columns">
+    <div class="col">
+      <div class="col-header"><span class="green">&#10003;</span> Application-level tracing</div>
+      <div class="item item-has">
+        <div class="item-label">Agent execution traces</div>
+        <div class="item-desc">Inputs, outputs, latencies, token counts per step</div>
+      </div>
+      <div class="item item-has">
+        <div class="item-label">LLM metrics</div>
+        <div class="item-desc">Prompts, completions, model params, cost tracking</div>
+      </div>
+      <div class="item item-has">
+        <div class="item-label">Graph visualization</div>
+        <div class="item-desc">State machine transitions, node execution order</div>
+      </div>
+      <div class="item item-has">
+        <div class="item-label">Experiment tracking</div>
+        <div class="item-desc">Run comparison, versioning, evaluation</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="col-header"><span class="accent">+</span> Infrastructure-level delegation tracking</div>
+      <div class="item item-gap">
+        <div class="item-label">Principal attribution</div>
+        <div class="item-desc">Which human or service initiated this delegation chain?</div>
+      </div>
+      <div class="item item-gap">
+        <div class="item-label">Cross-boundary delegation</div>
+        <div class="item-desc">Calls across teams, frameworks, and trust boundaries</div>
+      </div>
+      <div class="item item-gap">
+        <div class="item-label">Behavioral anomaly detection</div>
+        <div class="item-desc">Novel edges, capability violations, anomalous patterns</div>
+      </div>
+      <div class="item item-gap">
+        <div class="item-label">Independent audit trail</div>
+        <div class="item-desc">Observed at the network layer, outside agent control</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="oneliner">
+    Application tracing = <span class="green">what happened inside each agent</span> &nbsp;&bull;&nbsp;
+    Trust DAG = <span class="accent">who delegated to whom, and was it expected</span>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 2: Core Value ═══════════════ -->
+<div class="slide" id="slide-2">
+  <div class="logo-line">TRUST GRAPH + OPENTELEMETRY</div>
+  <div class="slide-title">Trust DAG: <span class="accent">delegation provenance</span></div>
+  <div class="slide-subtitle">Captures Principal &rarr; Agent &rarr; Agent &rarr; Resource chains without agent instrumentation</div>
+
+  <div style="flex:1">
+    <div class="big-point">
+      <div class="big-num">1</div>
+      <div class="big-text">
+        <h3>Full delegation lineage per request</h3>
+        <p>Every request carries a provenance chain: which principal initiated it, which agents acted on their behalf, and which resources were accessed. This is the accountability question &mdash; not "what model ran" but "who is responsible."</p>
+      </div>
+    </div>
+    <div class="big-point">
+      <div class="big-num">2</div>
+      <div class="big-text">
+        <h3>Observed at the <span class="accent">infrastructure layer</span></h3>
+        <p>Envoy sidecars emit spans for every inter-service call. Trust metadata (principal, caller, target, hop kind) is propagated as headers and tagged on spans. No agent instrumentation &mdash; the observation point is the service mesh, not the application.</p>
+      </div>
+    </div>
+    <div class="big-point">
+      <div class="big-num">3</div>
+      <div class="big-text">
+        <h3>Behavioral <span class="orange">assessment</span> from DAG topology</h3>
+        <p>Each run produces a Trust DAG. We compare it against historical baselines to detect novel edges, novel delegation paths, fanout spikes, retry storms, and capability alignment violations &mdash; scored into an automated risk assessment.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 3: Security & Ops Properties ═══════════════ -->
+<div class="slide" id="slide-3">
+  <div class="logo-line">TRUST GRAPH + OPENTELEMETRY</div>
+  <div class="slide-title">Properties for <span class="accent">security</span> and <span class="green">ops</span></div>
+  <div class="slide-subtitle">What this approach gives us beyond traditional agent tracing</div>
+
+  <div class="props-grid">
+    <div class="prop-card">
+      <h4><span class="accent">Cross-boundary visibility</span></h4>
+      <p>Works across heterogeneous agent systems. If Agent A calls Agent B on a different team, different framework, or different org &mdash; the sidecar captures the delegation hop regardless. Tracing doesn't stop at application boundaries.</p>
+    </div>
+    <div class="prop-card">
+      <h4><span class="accent">Tamper-resistant audit trail</span></h4>
+      <p>Spans are emitted by the Envoy sidecar, not the agent process. A compromised or buggy agent cannot alter its own trace data. The observation point is outside the agent's trust boundary.</p>
+    </div>
+    <div class="prop-card">
+      <h4><span class="green">Policy enforcement surface</span></h4>
+      <p>Because observation happens at the proxy layer, it can evolve from passive tracing to active enforcement. The same sidecars that observe delegation could enforce capability policies &mdash; rejecting calls that violate declared agent permissions before they reach the target.</p>
+    </div>
+    <div class="prop-card">
+      <h4><span class="green">Zero agent instrumentation</span></h4>
+      <p>No SDKs, no code changes, no framework dependencies inside agents. Works for any HTTP-based workload. Agents don't need to know they're being observed &mdash; the mesh handles telemetry orthogonally.</p>
+    </div>
+  </div>
+
+  <div class="oneliner" style="margin-top: 20px; font-size: 16px;">
+    These properties are complementary to application-level tracing &mdash; together they cover the full stack from LLM internals to inter-service delegation.
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 4: Live Demo ═══════════════ -->
+<div class="slide" id="slide-4">
+  <div class="logo-line">TRUST GRAPH + OPENTELEMETRY</div>
+  <div class="slide-title">Live Demo</div>
+  <div class="slide-subtitle">4 agents, Envoy sidecars, OTel Collector, Jaeger &mdash; running in kind</div>
+
+  <div class="arch-flow">
+    <div>
+      <div class="arch-box arch-principal">alice</div>
+      <div class="arch-sidecar">principal</div>
+    </div>
+    <div class="arch-arrow">&rarr;</div>
+    <div>
+      <div class="arch-box arch-gateway">envoy-ingress</div>
+      <div class="arch-sidecar">Lua filter injects trust headers</div>
+    </div>
+    <div class="arch-arrow">&rarr;</div>
+    <div>
+      <div class="arch-box arch-agent">chat-agent</div>
+      <div class="arch-sidecar">envoy sidecar</div>
+    </div>
+    <div class="arch-arrow">&rarr;</div>
+    <div>
+      <div class="arch-box arch-agent">read-agent</div>
+      <div class="arch-sidecar">envoy sidecar</div>
+    </div>
+    <div class="arch-arrow">&rarr;</div>
+    <div>
+      <div class="arch-box arch-resource">mock-database</div>
+      <div class="arch-sidecar">resource</div>
+    </div>
+  </div>
+
+  <div class="demo-steps">
+    <div class="demo-step">
+      <h4>1 &mdash; Send a request</h4>
+      <p>Open <code>/dashboard</code> &rarr; Chat view<br>
+      Set principal to <code>alice</code><br>
+      Send: <code>"give me all employees"</code><br>
+      Note the <span class="accent">run_id</span> in the response</p>
+    </div>
+    <div class="demo-step">
+      <h4>2 &mdash; Inspect the Trust DAG</h4>
+      <p>Open <code>/ui</code> &rarr; paste run_id<br>
+      See: <code>alice &rarr; chat-agent &rarr; read-agent &rarr; mock-database</code><br>
+      Click nodes for <span class="accent">provenance explanation</span><br>
+      Check the <span class="orange">assessment</span> tab</p>
+    </div>
+    <div class="demo-step">
+      <h4>3 &mdash; Explore the dashboard</h4>
+      <p><strong>Users:</strong> alice's history &mdash; agents used, resources accessed<br>
+      <strong>System:</strong> live inventory of agents, resources, gateways<br>
+      <strong>Agents:</strong> declared capabilities vs observed behavior</p>
+    </div>
+  </div>
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+  <button onclick="go(-1)">&larr; Prev</button>
+  <button onclick="go(1)">Next &rarr;</button>
+</div>
+<div class="slide-num" id="slide-num">1 / 4</div>
+
+<script>
+  let current = 1;
+  const total = 4;
+  function go(dir) {
+    const next = current + dir;
+    if (next < 1 || next > total) return;
+    document.getElementById(`slide-${current}`).classList.remove('active');
+    current = next;
+    document.getElementById(`slide-${current}`).classList.add('active');
+    document.getElementById('slide-num').textContent = `${current} / ${total}`;
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ') go(1);
+    if (e.key === 'ArrowLeft') go(-1);
+  });
+</script>
+</body>
+</html>

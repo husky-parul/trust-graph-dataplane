@@ -922,3 +922,582 @@ data:
     };
 
     document.addEventListener('DOMContentLoaded', () => app.init());
+  dashboard.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Agent Ops Dashboard</title>
+      <link rel="stylesheet" href="/dashboard/dashboard.css">
+    </head>
+    <body>
+      <nav id="sidebar">
+        <div class="sidebar-title">Agent Ops</div>
+        <button class="nav-btn active" data-view="agents" onclick="dash.switchView('agents')">Agents</button>
+        <button class="nav-btn" data-view="users" onclick="dash.switchView('users')">Users</button>
+        <button class="nav-btn" data-view="system" onclick="dash.switchView('system')">System</button>
+        <button class="nav-btn" data-view="chat" onclick="dash.switchView('chat')">Chat</button>
+        <div class="sidebar-links">
+          <a href="/ui">Trust DAG</a>
+        </div>
+      </nav>
+      <div id="main-area">
+        <div id="top-bar">
+          <div class="config-group">
+            <label>Core API</label>
+            <input id="core-base" type="text" value="" placeholder="http://localhost:8080">
+          </div>
+          <div class="config-group">
+            <label>Chat API</label>
+            <input id="chat-base" type="text" value="" placeholder="http://localhost:8080">
+          </div>
+          <div class="config-group">
+            <label>Principal</label>
+            <input id="principal-input" type="text" value="alice" placeholder="principal id">
+          </div>
+        </div>
+        <div id="view-agents" class="view active"></div>
+        <div id="view-users" class="view"></div>
+        <div id="view-system" class="view"></div>
+        <div id="view-chat" class="view">
+          <div id="chat-transcript"></div>
+          <div id="chat-composer">
+            <input id="chat-input" type="text" placeholder="Type a message...">
+            <button id="chat-send" onclick="dash.sendChat()">Send</button>
+            <button id="chat-clear" onclick="dash.clearChat()">Clear</button>
+          </div>
+        </div>
+      </div>
+      <script src="/dashboard/dashboard.js"></script>
+    </body>
+    </html>
+  dashboard.css: |
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+      background: #1a1a2e; color: #e0e0e0;
+      height: 100vh; display: flex; overflow: hidden;
+    }
+
+    /* Sidebar */
+    #sidebar {
+      width: 200px; min-width: 200px; background: #16213e;
+      border-right: 2px solid #0f3460; display: flex;
+      flex-direction: column; padding: 16px 0;
+    }
+    .sidebar-title {
+      font-size: 18px; font-weight: 700; color: #4a90d9;
+      padding: 0 16px 16px; border-bottom: 1px solid #0f3460;
+      margin-bottom: 8px;
+    }
+    .nav-btn {
+      display: block; width: 100%; text-align: left;
+      padding: 10px 16px; background: transparent; border: none;
+      color: #95a5a6; cursor: pointer; font-size: 14px;
+      font-family: inherit; border-left: 3px solid transparent;
+    }
+    .nav-btn:hover { background: #1a1a2e; color: #e0e0e0; }
+    .nav-btn.active {
+      color: #4a90d9; border-left-color: #4a90d9; background: #1a1a2e;
+      font-weight: 600;
+    }
+    .sidebar-links {
+      margin-top: auto; padding: 16px; border-top: 1px solid #0f3460;
+    }
+    .sidebar-links a {
+      color: #4a90d9; text-decoration: none; font-size: 12px;
+    }
+    .sidebar-links a:hover { text-decoration: underline; }
+
+    /* Main area */
+    #main-area {
+      flex: 1; display: flex; flex-direction: column; overflow: hidden;
+    }
+    #top-bar {
+      display: flex; align-items: center; gap: 16px;
+      padding: 8px 16px; background: #16213e;
+      border-bottom: 1px solid #0f3460; flex-wrap: wrap;
+    }
+    .config-group { display: flex; align-items: center; gap: 6px; }
+    .config-group label {
+      font-size: 11px; color: #95a5a6; text-transform: uppercase;
+      font-weight: 600; white-space: nowrap;
+    }
+    .config-group input {
+      background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0;
+      padding: 5px 8px; border-radius: 4px; font-family: monospace;
+      font-size: 12px; width: 200px;
+    }
+    .config-group input:focus { outline: none; border-color: #4a90d9; }
+    #principal-input { width: 120px; }
+
+    /* Views */
+    .view { display: none; flex: 1; overflow-y: auto; padding: 16px; }
+    .view.active { display: flex; flex-direction: column; }
+
+    /* Tables */
+    .dash-table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    .dash-table th {
+      text-align: left; padding: 8px 10px; background: #0f3460;
+      color: #4a90d9; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.5px; position: sticky; top: 0;
+    }
+    .dash-table td {
+      padding: 8px 10px; border-bottom: 1px solid #0f3460;
+    }
+    .dash-table tr:hover { background: #16213e; }
+    .dash-table tr.selected { background: #0f3460; }
+
+    /* Search */
+    .search-bar {
+      margin-bottom: 12px;
+    }
+    .search-bar input {
+      background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0;
+      padding: 6px 10px; border-radius: 4px; font-family: monospace;
+      font-size: 13px; width: 300px;
+    }
+    .search-bar input:focus { outline: none; border-color: #4a90d9; }
+
+    /* Detail panel (inline) */
+    .detail-inline {
+      margin-top: 12px; padding: 12px; background: #16213e;
+      border: 1px solid #0f3460; border-radius: 4px;
+    }
+    .detail-inline h3 {
+      font-size: 13px; color: #4a90d9; margin-bottom: 8px;
+    }
+    .detail-json {
+      background: #1a1a2e; padding: 10px; border-radius: 4px;
+      font-size: 12px; overflow-x: auto; white-space: pre-wrap;
+      border: 1px solid #0f3460; max-height: 300px; overflow-y: auto;
+    }
+    .copy-btn {
+      background: #0f3460; color: #95a5a6; border: 1px solid #0f3460;
+      padding: 4px 12px; border-radius: 3px; cursor: pointer;
+      font-size: 11px; margin-left: 8px;
+    }
+    .copy-btn:hover { color: #e0e0e0; border-color: #4a90d9; }
+
+    /* Users view */
+    .users-layout { display: flex; gap: 16px; flex: 1; overflow: hidden; }
+    .users-list {
+      width: 280px; min-width: 280px; overflow-y: auto;
+      border-right: 1px solid #0f3460; padding-right: 16px;
+    }
+    .user-item {
+      padding: 10px; margin-bottom: 6px; background: #16213e;
+      border: 1px solid #0f3460; border-radius: 4px; cursor: pointer;
+      font-size: 13px;
+    }
+    .user-item:hover { border-color: #4a90d9; }
+    .user-item.active { border-color: #4a90d9; background: #0f3460; }
+    .user-item .user-name { font-weight: 600; color: #4a90d9; }
+    .user-item .user-meta { font-size: 11px; color: #95a5a6; margin-top: 4px; }
+    .user-detail { flex: 1; overflow-y: auto; }
+    .user-detail h3 {
+      font-size: 13px; color: #4a90d9; margin-bottom: 8px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+    .tag {
+      padding: 4px 10px; border-radius: 3px; font-size: 12px;
+      cursor: pointer;
+    }
+    .tag-agent { background: #1a3e1a; color: #5cb85c; border: 1px solid #2d5a2d; }
+    .tag-resource { background: #3e2a0a; color: #e67e22; border: 1px solid #5a3d0a; }
+    .tag:hover { opacity: 0.8; }
+
+    /* System view */
+    .system-section { margin-bottom: 24px; }
+    .system-section h3 {
+      font-size: 13px; color: #4a90d9; margin-bottom: 8px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      padding-bottom: 6px; border-bottom: 1px solid #0f3460;
+    }
+    .system-item {
+      padding: 8px 10px; margin-bottom: 4px; background: #16213e;
+      border: 1px solid #0f3460; border-radius: 4px; font-size: 13px;
+      display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer;
+    }
+    .system-item:hover { border-color: #4a90d9; }
+    .system-item .item-name { font-weight: 600; }
+    .system-item .item-meta { font-size: 11px; color: #95a5a6; }
+    .source-registered { color: #5cb85c; }
+    .source-observed { color: #f39c12; }
+
+    /* Chat view */
+    #view-chat { display: none; flex-direction: column; }
+    #view-chat.active { display: flex; }
+    #chat-transcript {
+      flex: 1; overflow-y: auto; padding-bottom: 12px;
+    }
+    .chat-msg {
+      margin-bottom: 10px; padding: 10px; border-radius: 4px;
+      font-size: 13px; max-width: 80%;
+    }
+    .chat-msg.user {
+      background: #0f3460; margin-left: auto; text-align: right;
+      border: 1px solid #4a90d9;
+    }
+    .chat-msg.assistant {
+      background: #16213e; border: 1px solid #0f3460;
+    }
+    .chat-msg .msg-text { margin-bottom: 4px; white-space: pre-wrap; }
+    .chat-msg .msg-raw {
+      display: none; font-size: 11px; color: #95a5a6;
+      background: #1a1a2e; padding: 8px; border-radius: 3px;
+      margin-top: 6px; white-space: pre-wrap; overflow-x: auto;
+    }
+    .chat-msg .msg-toggle {
+      font-size: 11px; color: #4a90d9; cursor: pointer;
+      margin-top: 4px; display: inline-block;
+    }
+    .chat-msg .msg-toggle:hover { text-decoration: underline; }
+    #chat-composer {
+      display: flex; gap: 8px; padding-top: 8px;
+      border-top: 1px solid #0f3460;
+    }
+    #chat-input {
+      flex: 1; background: #1a1a2e; border: 1px solid #0f3460;
+      color: #e0e0e0; padding: 8px 12px; border-radius: 4px;
+      font-family: monospace; font-size: 13px;
+    }
+    #chat-input:focus { outline: none; border-color: #4a90d9; }
+    #chat-send, #chat-clear {
+      background: #0f3460; color: #e0e0e0; border: 1px solid #4a90d9;
+      padding: 8px 16px; border-radius: 4px; cursor: pointer;
+      font-size: 13px;
+    }
+    #chat-send:hover { background: #4a90d9; color: #fff; }
+    #chat-clear { border-color: #0f3460; color: #95a5a6; }
+    #chat-clear:hover { border-color: #e74c3c; color: #e74c3c; }
+
+    .msg-run-id {
+      font-size: 11px; color: #95a5a6; margin-top: 6px;
+      padding: 4px 8px; background: #1a1a2e; border-radius: 3px;
+      border: 1px solid #0f3460;
+    }
+    .msg-run-id code {
+      color: #4a90d9; font-size: 11px; user-select: all;
+    }
+    .run-link {
+      color: #5cb85c; text-decoration: none; margin-left: 8px;
+      font-size: 11px; border: 1px solid #2d5a2d; padding: 1px 6px;
+      border-radius: 3px;
+    }
+    .run-link:hover { background: #1a3e1a; text-decoration: none; }
+
+    .empty-state {
+      color: #555; font-style: italic; padding: 24px;
+      text-align: center; font-size: 13px;
+    }
+    .loading { color: #4a90d9; font-style: italic; }
+  dashboard.js: |
+    const dash = {
+      currentView: 'agents',
+      agentsData: null,
+      usersData: null,
+      systemData: null,
+      selectedAgent: null,
+      selectedUser: null,
+
+      coreBase() {
+        return document.getElementById('core-base').value || '';
+      },
+      chatBase() {
+        return document.getElementById('chat-base').value || '';
+      },
+      principal() {
+        return document.getElementById('principal-input').value || 'anonymous';
+      },
+
+      init() {
+        document.getElementById('chat-input').addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') this.sendChat();
+        });
+        this.switchView('agents');
+      },
+
+      switchView(view) {
+        this.currentView = view;
+        document.querySelectorAll('.nav-btn').forEach(b =>
+          b.classList.toggle('active', b.dataset.view === view));
+        document.querySelectorAll('.view').forEach(v =>
+          v.classList.toggle('active', v.id === `view-${view}`));
+        if (view === 'agents') this.loadAgents();
+        else if (view === 'users') this.loadUsers();
+        else if (view === 'system') this.loadSystem();
+      },
+
+      esc(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      },
+
+      /* ── Agents View ── */
+
+      async loadAgents() {
+        const el = document.getElementById('view-agents');
+        el.innerHTML = '<div class="loading">Loading agents...</div>';
+        try {
+          const resp = await fetch(`${this.coreBase()}/agents`);
+          this.agentsData = await resp.json();
+          this.renderAgents();
+        } catch (e) {
+          el.innerHTML = `<div class="empty-state">Failed to load agents: ${this.esc(e.message)}</div>`;
+        }
+      },
+
+      renderAgents(filter) {
+        const el = document.getElementById('view-agents');
+        const agents = this.agentsData.agents || [];
+        const filtered = filter
+          ? agents.filter(a => a.agent_id.toLowerCase().includes(filter) ||
+              a.name.toLowerCase().includes(filter))
+          : agents;
+
+        let html = `<div class="search-bar">
+          <input type="text" placeholder="Search agents..." oninput="dash.renderAgents(this.value.toLowerCase())">
+          <span style="color:#95a5a6;font-size:12px;margin-left:8px;">${filtered.length} agents</span>
+        </div>`;
+
+        if (!filtered.length) {
+          html += '<div class="empty-state">No agents found</div>';
+        } else {
+          html += `<div style="overflow-y:auto;flex:1"><table class="dash-table"><thead><tr>
+            <th>Agent ID</th><th>Name</th><th>Capabilities</th><th>Dependencies</th>
+          </tr></thead><tbody>`;
+          filtered.forEach((a, i) => {
+            const sel = this.selectedAgent === a.agent_id ? 'selected' : '';
+            const caps = (a.capabilities || []).join(', ') || '-';
+            const deps = (a.dependencies || []).join(', ') || '-';
+            html += `<tr class="${sel}" onclick="dash.selectAgent('${this.esc(a.agent_id)}')">
+              <td style="color:#5cb85c;font-weight:600">${this.esc(a.agent_id)}</td>
+              <td>${this.esc(a.name)}</td>
+              <td style="font-size:12px;color:#95a5a6">${this.esc(caps)}</td>
+              <td style="font-size:12px;color:#95a5a6">${this.esc(deps)}</td>
+            </tr>`;
+          });
+          html += '</tbody></table></div>';
+        }
+
+        if (this.selectedAgent) {
+          const agent = agents.find(a => a.agent_id === this.selectedAgent);
+          if (agent) {
+            html += `<div class="detail-inline">
+              <h3>${this.esc(agent.agent_id)} <button class="copy-btn" onclick="dash.copyAgentJson()">Copy JSON</button></h3>
+              <pre class="detail-json" id="agent-json">${this.esc(JSON.stringify(agent, null, 2))}</pre>
+            </div>`;
+          }
+        }
+
+        el.innerHTML = html;
+      },
+
+      selectAgent(agentId) {
+        this.selectedAgent = this.selectedAgent === agentId ? null : agentId;
+        this.renderAgents();
+      },
+
+      copyAgentJson() {
+        const el = document.getElementById('agent-json');
+        if (el) navigator.clipboard.writeText(el.textContent);
+      },
+
+      /* ── Users View ── */
+
+      async loadUsers() {
+        const el = document.getElementById('view-users');
+        el.innerHTML = '<div class="loading">Loading users...</div>';
+        try {
+          const resp = await fetch(`${this.coreBase()}/users`);
+          this.usersData = await resp.json();
+          this.renderUsers();
+        } catch (e) {
+          el.innerHTML = `<div class="empty-state">Failed to load users: ${this.esc(e.message)}</div>`;
+        }
+      },
+
+      renderUsers() {
+        const el = document.getElementById('view-users');
+        const users = this.usersData.users || [];
+
+        if (!users.length) {
+          el.innerHTML = '<div class="empty-state">No users found. Send requests through the ingress first.</div>';
+          return;
+        }
+
+        let html = '<div class="users-layout"><div class="users-list">';
+        users.forEach(u => {
+          const active = this.selectedUser === u.principal ? 'active' : '';
+          html += `<div class="user-item ${active}" onclick="dash.selectUser('${this.esc(u.principal)}')">
+            <div class="user-name">${this.esc(u.principal)}</div>
+            <div class="user-meta">${u.total_runs} run${u.total_runs !== 1 ? 's' : ''} &middot; ${u.agents_used.length} agents &middot; ${u.resources_accessed.length} resources</div>
+          </div>`;
+        });
+        html += '</div>';
+
+        html += '<div class="user-detail">';
+        const sel = users.find(u => u.principal === this.selectedUser);
+        if (sel) {
+          html += `<h3>Agents Used</h3><div class="tag-list">`;
+          sel.agents_used.forEach(a => {
+            html += `<span class="tag tag-agent" onclick="dash.jumpToAgent('${this.esc(a)}')" title="View in Agents">${this.esc(a)}</span>`;
+          });
+          if (!sel.agents_used.length) html += '<span style="color:#555;font-size:12px">None</span>';
+          html += `</div>`;
+
+          html += `<h3>Resources Accessed</h3><div class="tag-list">`;
+          sel.resources_accessed.forEach(r => {
+            html += `<span class="tag tag-resource" onclick="dash.jumpToSystem()" title="View in System">${this.esc(r)}</span>`;
+          });
+          if (!sel.resources_accessed.length) html += '<span style="color:#555;font-size:12px">None</span>';
+          html += `</div>`;
+        } else {
+          html += '<div class="empty-state">Select a user to see details</div>';
+        }
+        html += '</div></div>';
+
+        el.innerHTML = html;
+      },
+
+      selectUser(principal) {
+        this.selectedUser = principal;
+        this.renderUsers();
+      },
+
+      jumpToAgent(agentId) {
+        this.selectedAgent = agentId;
+        this.switchView('agents');
+      },
+
+      jumpToSystem() {
+        this.switchView('system');
+      },
+
+      /* ── System View ── */
+
+      async loadSystem() {
+        const el = document.getElementById('view-system');
+        el.innerHTML = '<div class="loading">Loading system inventory...</div>';
+        try {
+          const resp = await fetch(`${this.coreBase()}/system`);
+          this.systemData = await resp.json();
+          this.renderSystem();
+        } catch (e) {
+          el.innerHTML = `<div class="empty-state">Failed to load system: ${this.esc(e.message)}</div>`;
+        }
+      },
+
+      renderSystem() {
+        const el = document.getElementById('view-system');
+        const data = this.systemData;
+        let html = '';
+
+        // Agents
+        html += `<div class="system-section"><h3>Agents Running (${(data.agents || []).length})</h3>`;
+        (data.agents || []).forEach(a => {
+          const srcClass = a.source === 'registered' ? 'source-registered' : 'source-observed';
+          html += `<div class="system-item" onclick="dash.jumpToAgent('${this.esc(a.agent_id)}')">
+            <span class="item-name" style="color:#5cb85c">${this.esc(a.agent_id)}</span>
+            <span class="item-meta">${this.esc(a.name || '')} ${a.version ? 'v' + this.esc(a.version) : ''} &middot; <span class="${srcClass}">${this.esc(a.source)}</span></span>
+          </div>`;
+        });
+        if (!(data.agents || []).length) html += '<div class="empty-state">No agents found</div>';
+        html += '</div>';
+
+        // Resources
+        html += `<div class="system-section"><h3>Resources Connected (${(data.resources || []).length})</h3>`;
+        (data.resources || []).forEach(r => {
+          html += `<div class="system-item">
+            <span class="item-name" style="color:#e67e22">${this.esc(r.resource_id)}</span>
+            <span class="item-meta">${this.esc(r.label)}</span>
+          </div>`;
+        });
+        if (!(data.resources || []).length) html += '<div class="empty-state">No resources observed yet</div>';
+        html += '</div>';
+
+        // Gateways
+        html += `<div class="system-section"><h3>Gateways (${(data.gateways || []).length})</h3>`;
+        (data.gateways || []).forEach(g => {
+          html += `<div class="system-item">
+            <span class="item-name" style="color:#4a90d9">${this.esc(g.gateway_id)}</span>
+            <span class="item-meta">${this.esc(g.type)}</span>
+          </div>`;
+        });
+        html += '</div>';
+
+        el.innerHTML = html;
+      },
+
+      /* ── Chat View ── */
+
+      genUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+          const r = Math.random() * 16 | 0;
+          return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+      },
+
+      async sendChat() {
+        const input = document.getElementById('chat-input');
+        const msg = input.value.trim();
+        if (!msg) return;
+        input.value = '';
+
+        const runId = this.genUUID();
+        this.appendChatMsg('user', msg);
+
+        try {
+          const resp = await fetch(`${this.chatBase()}/chat`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-principal-id': this.principal(),
+              'x-request-id': runId,
+            },
+            body: JSON.stringify({ prompt: msg }),
+          });
+          const data = await resp.json();
+          const text = data.response || data.message || JSON.stringify(data);
+          this.appendChatMsg('assistant', text, data, runId);
+        } catch (e) {
+          this.appendChatMsg('assistant', `Error: ${e.message}`);
+        }
+      },
+
+      appendChatMsg(role, text, rawData, runId) {
+        const transcript = document.getElementById('chat-transcript');
+        const div = document.createElement('div');
+        div.className = `chat-msg ${role}`;
+
+        let html = `<div class="msg-text">${this.esc(text)}</div>`;
+        if (runId) {
+          const dagUrl = `${this.coreBase()}/ui#${runId}`;
+          html += `<div class="msg-run-id">run_id: <code>${this.esc(runId)}</code>
+            <a href="/ui" target="_blank" class="run-link" onclick="navigator.clipboard.writeText('${this.esc(runId)}')">Trust DAG</a>
+            <a href="${this.coreBase()}/lineage/${encodeURIComponent(runId)}/assess" target="_blank" class="run-link">Assess</a>
+          </div>`;
+        }
+        if (rawData) {
+          const rawId = 'raw-' + Date.now();
+          html += `<span class="msg-toggle" onclick="document.getElementById('${rawId}').style.display = document.getElementById('${rawId}').style.display === 'block' ? 'none' : 'block'">Show raw JSON</span>`;
+          html += `<div class="msg-raw" id="${rawId}">${this.esc(JSON.stringify(rawData, null, 2))}</div>`;
+        }
+        div.innerHTML = html;
+        transcript.appendChild(div);
+        transcript.scrollTop = transcript.scrollHeight;
+      },
+
+      clearChat() {
+        document.getElementById('chat-transcript').innerHTML = '';
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => dash.init());

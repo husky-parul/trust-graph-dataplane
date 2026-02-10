@@ -66,6 +66,34 @@ data:
                                 cluster: lineage_service
                               decorator:
                                 operation: "lineage-query"
+                            # Dashboard
+                            - match:
+                                prefix: "/dashboard"
+                              route:
+                                cluster: lineage_service
+                              decorator:
+                                operation: "dashboard"
+                            # Agents API
+                            - match:
+                                prefix: "/agents"
+                              route:
+                                cluster: lineage_service
+                              decorator:
+                                operation: "agents-api"
+                            # Users API
+                            - match:
+                                prefix: "/users"
+                              route:
+                                cluster: lineage_service
+                              decorator:
+                                operation: "users-api"
+                            # System API
+                            - match:
+                                prefix: "/system"
+                              route:
+                                cluster: lineage_service
+                              decorator:
+                                operation: "system-api"
                             # Agent cards API
                             - match:
                                 prefix: "/agent-cards"
