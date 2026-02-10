@@ -144,6 +144,13 @@
     display: flex; align-items: center; gap: 12px;
     margin-bottom: 8px; color: #484f58; font-size: 14px;
   }
+  .attribution {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%);
+    color: #30363d; font-size: 11px; letter-spacing: 0.3px;
+  }
+  .attribution a { color: #30363d; text-decoration: none; }
+  .attribution a:hover { color: #484f58; }
 </style>
 </head>
 <body>
@@ -245,7 +252,7 @@
     </div>
     <div class="prop-card">
       <h4><span class="accent">Tamper-resistant audit trail</span></h4>
-      <p>Spans are emitted by the Envoy sidecar, not the agent process. A compromised or buggy agent cannot alter its own trace data. The observation point is outside the agent's trust boundary.</p>
+      <p>Spans are emitted by the Envoy sidecar, not the agent process. A compromised agent cannot alter its own trace data. The observation point is outside the agent's trust boundary.</p>
     </div>
     <div class="prop-card">
       <h4><span class="green">Policy enforcement surface</span></h4>
@@ -318,6 +325,8 @@
     </div>
   </div>
 </div>
+
+<div class="attribution">Parul Singh &middot; Security, ET OCTO &middot; <a href="mailto:parsingh@redhat.com">parsingh@redhat.com</a></div>
 
 <!-- Navigation -->
 <div class="nav">
