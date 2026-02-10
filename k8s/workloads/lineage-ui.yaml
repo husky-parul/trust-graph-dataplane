@@ -1439,7 +1439,9 @@ data:
       /* ── Chat View ── */
 
       genUUID() {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        // Envoy rewrites UUID version nibble to 9, so we generate with 9
+        // to ensure the displayed run_id matches what Jaeger stores
+        return 'xxxxxxxx-xxxx-9xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
           const r = Math.random() * 16 | 0;
           return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
         });

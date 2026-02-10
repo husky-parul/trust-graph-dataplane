@@ -253,7 +253,7 @@
     </div>
     <div class="prop-card">
       <h4><span class="green">Zero agent instrumentation</span></h4>
-      <p>No SDKs, no code changes, no framework dependencies inside agents. Works for any HTTP-based workload. Agents don't need to know they're being observed &mdash; the mesh handles telemetry orthogonally.</p>
+      <p>No SDKs, no code changes, no framework dependencies inside agents. Works for any workload routable through the service mesh &mdash; HTTP, gRPC, WebSocket. Trust metadata propagates via <strong>W3C Trace Context</strong> <code>tracestate</code>, aligning with OTel's native propagation standard.</p>
     </div>
   </div>
 

@@ -19,6 +19,7 @@ data:
                     "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                     stat_prefix: ingress_http
                     generate_request_id: true
+                    preserve_external_request_id: true
                     tracing:
                       custom_tags:
                         - tag: trust.principal_id
