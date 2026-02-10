@@ -241,7 +241,7 @@
   <div class="props-grid">
     <div class="prop-card">
       <h4><span class="accent">Cross-boundary visibility</span></h4>
-      <p>Works across heterogeneous agent systems. If Agent A calls Agent B on a different team, different framework, or different org &mdash; the sidecar captures the delegation hop regardless. Tracing doesn't stop at application boundaries.</p>
+      <p>Captures delegation hops across heterogeneous agent systems &mdash; different teams, frameworks, runtimes. For third-party and external APIs, the egress sidecar captures the outbound edge: which agent called what, on whose behalf. Cross-domain federation is possible via W3C Trace Context <code>tracestate</code> where both sides participate.</p>
     </div>
     <div class="prop-card">
       <h4><span class="accent">Tamper-resistant audit trail</span></h4>
