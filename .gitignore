@@ -1,7 +1,6 @@
 # Kubernetes
 *.kubeconfig
 kubeconfig
-.claude/
 
 # Kind
 kind-config.yaml.local
@@ -16,11 +15,22 @@ kind-config.yaml.local
 .DS_Store
 Thumbs.db
 
-# Secrets (never commit)
+# Secrets and credentials (never commit)
+.claude/
+.env
+.env.*
 **/secrets/
 *.secret
 *.key
 *.pem
+*.p12
+*.pfx
+*.jks
+*.crt
+*.cert
+credentials.json
+token.json
+**/service-account*.json
 
 # Local overrides
 *.local.yaml
@@ -29,3 +39,21 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Temp and backup files
+*.bak
+*.tmp
+*.swn
+
+# Python
+__pycache__/
+*.pyc
+
+# Data (local SQLite, archives)
+*.db
+*.sqlite
+*.tar.gz
+*.zip
+
+# Node (if any JS tooling added)
+node_modules/

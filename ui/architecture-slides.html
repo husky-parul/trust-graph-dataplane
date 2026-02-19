@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trust DAG — Data Plane Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0d1117; color: #e6edf3;
+    height: 100vh; overflow: hidden;
+  }
+
+  .slide { display: none; height: 100vh; padding: 48px 64px; flex-direction: column; }
+  .slide.active { display: flex; }
+
+  .nav {
+    position: fixed; bottom: 24px; right: 32px;
+    display: flex; gap: 12px; z-index: 10;
+  }
+  .nav button {
+    background: #21262d; border: 1px solid #30363d; color: #8b949e;
+    padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px;
+  }
+  .nav button:hover { background: #30363d; color: #e6edf3; }
+  .slide-num {
+    position: fixed; bottom: 28px; left: 32px;
+    color: #484f58; font-size: 14px;
+  }
+
+  .slide-title {
+    font-size: 36px; font-weight: 700; margin-bottom: 8px; line-height: 1.2;
+  }
+  .slide-subtitle {
+    font-size: 17px; color: #8b949e; margin-bottom: 36px;
+    font-weight: 400; line-height: 1.5;
+  }
+  .accent { color: #58a6ff; }
+  .green { color: #3fb950; }
+  .orange { color: #d29922; }
+  .purple { color: #bc8cff; }
+  .red { color: #f85149; }
+  .dim { color: #8b949e; }
+
+  /* ── Architecture diagram ── */
+  .arch-diagram {
+    display: flex; flex: 1; gap: 32px; align-items: stretch;
+  }
+
+  .arch-column {
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .arch-column.request-path { flex: 2; }
+  .arch-column.telemetry-path { flex: 1.5; }
+  .arch-column.enforce-path { flex: 1.5; }
+
+  .arch-col-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.5px; color: #484f58; margin-bottom: 4px;
+    padding-bottom: 6px; border-bottom: 1px solid #21262d;
+  }
+
+  .comp-box {
+    border-radius: 8px; padding: 14px 16px;
+    border: 1px solid #21262d; background: #161b22;
+  }
+  .comp-box h4 {
+    font-size: 14px; font-weight: 700; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .comp-box .desc {
+    font-size: 12px; color: #8b949e; line-height: 1.5;
+  }
+  .comp-box .tag {
+    display: inline-block; font-size: 10px; padding: 2px 7px;
+    border-radius: 10px; font-weight: 600; margin-right: 4px; margin-top: 4px;
+  }
+  .tag-observe { background: #0d2818; color: #3fb950; border: 1px solid #1a4d2e; }
+  .tag-reconstruct { background: #0d1a30; color: #58a6ff; border: 1px solid #1a3050; }
+  .tag-enforce { background: #2a1a0a; color: #d29922; border: 1px solid #4a3010; }
+
+  .comp-ingress { border-color: #bc8cff; }
+  .comp-ingress h4 { color: #bc8cff; }
+  .comp-sidecar { border-color: #3fb950; }
+  .comp-sidecar h4 { color: #3fb950; }
+  .comp-otel { border-color: #58a6ff; }
+  .comp-otel h4 { color: #58a6ff; }
+  .comp-backend { border-color: #484f58; }
+  .comp-backend h4 { color: #8b949e; }
+  .comp-lineage { border-color: #58a6ff; }
+  .comp-lineage h4 { color: #58a6ff; }
+  .comp-enforcer { border-color: #d29922; }
+  .comp-enforcer h4 { color: #d29922; }
+  .comp-opa { border-color: #d29922; }
+  .comp-opa h4 { color: #d29922; }
+
+  .arrow-down {
+    text-align: center; color: #30363d; font-size: 18px; line-height: 1;
+    padding: 2px 0;
+  }
+  .arrow-right-label {
+    font-size: 10px; color: #484f58; text-align: center;
+    padding: 2px 0;
+  }
+
+  /* ── Flow slide ── */
+  .flow-container {
+    flex: 1; display: flex; flex-direction: column; gap: 8px;
+  }
+  .flow-step {
+    display: flex; align-items: stretch; gap: 16px;
+  }
+  .flow-num {
+    min-width: 32px; display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 800; color: #30363d;
+  }
+  .flow-component {
+    min-width: 160px; padding: 8px 14px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; display: flex; align-items: center;
+  }
+  .flow-action {
+    flex: 1; padding: 8px 14px; background: #161b22;
+    border-radius: 6px; font-size: 12px; color: #8b949e; line-height: 1.5;
+    border: 1px solid #21262d;
+  }
+  .flow-action code {
+    background: #0d1117; padding: 1px 5px; border-radius: 3px;
+    font-size: 11px; color: #e6edf3;
+  }
+  .flow-action .label { color: #e6edf3; font-weight: 600; font-size: 12px; }
+  .fc-ingress { background: #1a0d30; border: 1px solid #bc8cff; color: #bc8cff; }
+  .fc-sidecar-in { background: #0d2818; border: 1px solid #3fb950; color: #3fb950; }
+  .fc-sidecar-out { background: #0d2818; border: 1px solid #238636; color: #238636; }
+  .fc-lineage { background: #0d1a30; border: 1px solid #58a6ff; color: #58a6ff; }
+
+  /* ── Enforcer slide ── */
+  .enforcer-grid {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; flex: 1;
+  }
+  .enforcer-card {
+    background: #161b22; border: 1px solid #21262d;
+    border-radius: 8px; padding: 20px;
+  }
+  .enforcer-card h4 {
+    font-size: 16px; margin-bottom: 10px;
+  }
+  .enforcer-card p {
+    font-size: 13px; color: #8b949e; line-height: 1.6;
+  }
+  .enforcer-card ul {
+    list-style: none; margin-top: 8px;
+  }
+  .enforcer-card li {
+    font-size: 12px; color: #8b949e; padding: 3px 0;
+    border-bottom: 1px solid #21262d;
+  }
+  .enforcer-card li:last-child { border-bottom: none; }
+  .enforcer-card li span { color: #e6edf3; font-weight: 600; }
+
+  .combiner-bar {
+    margin-top: 20px; padding: 16px 24px;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; text-align: center;
+    font-size: 15px; line-height: 1.6;
+  }
+
+  /* ── Header propagation ── */
+  .header-table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  .header-table th {
+    text-align: left; padding: 8px 12px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1px; color: #484f58;
+    border-bottom: 2px solid #21262d;
+  }
+  .header-table td {
+    padding: 8px 12px; border-bottom: 1px solid #161b22;
+  }
+  .header-table code {
+    background: #0d1117; padding: 2px 6px; border-radius: 3px;
+    font-size: 12px;
+  }
+  .header-table .immutable { color: #3fb950; }
+  .header-table .mutable { color: #d29922; }
+  .header-table .hop-label {
+    font-weight: 700; font-size: 12px; padding: 10px 12px;
+    color: #58a6ff;
+  }
+
+  .oneliner {
+    margin-top: auto; padding: 16px 24px;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; font-size: 15px; line-height: 1.6;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ SLIDE 1: System Architecture Overview ═══════════════ -->
+<div class="slide active" id="slide-1">
+  <div class="slide-title">Data Plane <span class="accent">Architecture</span></div>
+  <div class="slide-subtitle">Components and data flow &mdash; every proxy observes, the lineage service reconstructs, enforcers decide</div>
+
+  <div class="arch-diagram">
+    <!-- Request Path -->
+    <div class="arch-column request-path">
+      <div class="arch-col-label">Request path</div>
+
+      <div class="comp-box comp-ingress">
+        <h4>Ingress Gateway</h4>
+        <div class="desc">Extracts caller identity (JWT, mTLS, SPIFFE). Stamps trust headers onto the request. Emits first OTel span.</div>
+        <div><span class="tag tag-observe">observe</span></div>
+      </div>
+      <div class="arrow-down">&darr;</div>
+
+      <div class="comp-box comp-sidecar">
+        <h4>Proxy Sidecar &mdash; Inbound (15001)</h4>
+        <div class="desc">Emits trust-tagged span. Calls authz &rarr; enforcer plugins. Forwards to agent app if allowed.</div>
+        <div><span class="tag tag-observe">observe</span><span class="tag tag-enforce">enforce</span></div>
+      </div>
+      <div class="arrow-down">&darr;</div>
+
+      <div class="comp-box" style="border-color: #484f58;">
+        <h4 style="color: #8b949e;">Agent App</h4>
+        <div class="desc">Unaware of trust metadata. Processes request. Makes outgoing calls via localhost.</div>
+      </div>
+      <div class="arrow-down">&darr;</div>
+
+      <div class="comp-box comp-sidecar" style="border-color: #238636;">
+        <h4 style="color: #238636;">Proxy Sidecar &mdash; Outbound (15002)</h4>
+        <div class="desc">Mutates trust headers: <code>x-caller-id</code> &rarr; self, <code>x-trust-hop-kind</code> &rarr; delegation. Preserves <code>x-principal-id</code> and <code>x-request-id</code>. Routes to next sidecar.</div>
+      </div>
+    </div>
+
+    <!-- Telemetry Path -->
+    <div class="arch-column telemetry-path">
+      <div class="arch-col-label">Telemetry path</div>
+
+      <div class="comp-box comp-otel">
+        <h4>OTel Collector</h4>
+        <div class="desc">Receives trust-tagged spans from all proxies via OTLP. Batches, enriches, exports.</div>
+      </div>
+      <div class="arrow-down">&darr;</div>
+
+      <div class="comp-box comp-backend">
+        <h4>Trace Backend</h4>
+        <div class="desc">Pluggable span storage. Any OTLP-compatible store. Trust DAG depends on the trust tags, not specific backends.</div>
+      </div>
+      <div class="arrow-down">&darr;</div>
+
+      <div class="comp-box comp-lineage">
+        <h4>Lineage Service</h4>
+        <div class="desc">Reads spans, reconstructs delegation DAG. Typed nodes (principal, agent, resource). Edges with hop kind, count, timestamps.</div>
+        <div><span class="tag tag-reconstruct">reconstruct</span></div>
+      </div>
+      <div class="arrow-down">&darr;</div>
+
+      <div class="comp-box comp-lineage" style="border-color: #1f6feb;">
+        <h4 style="color: #1f6feb;">APIs</h4>
+        <div class="desc">
+          <code>/dag</code> &mdash; full graph &nbsp;&bull;&nbsp;
+          <code>/explain</code> &mdash; provenance &nbsp;&bull;&nbsp;
+          <code>/assess</code> &mdash; risk score &nbsp;&bull;&nbsp;
+          <code>/agents</code> &mdash; capability cards
+        </div>
+      </div>
+    </div>
+
+    <!-- Enforcement Path -->
+    <div class="arch-column enforce-path">
+      <div class="arch-col-label">Enforcement path</div>
+
+      <div class="comp-box comp-opa">
+        <h4>OPA</h4>
+        <div class="desc">Policy rules on trust headers + agent cards. Evaluates: is this caller allowed? Is this target declared?</div>
+        <div><span class="tag tag-enforce">enforce</span></div>
+      </div>
+
+      <div class="comp-box comp-enforcer">
+        <h4>Trust Score Engine</h4>
+        <div class="desc">Queries lineage baseline. Scores: novel edge, depth, fanout, overreach, agent evals. Combined risk 0.0&ndash;1.0.</div>
+        <div><span class="tag tag-enforce">enforce</span><span class="tag tag-reconstruct">reconstruct</span></div>
+      </div>
+
+      <div class="comp-box" style="border-color: #d29922;">
+        <h4 style="color: #d29922;">External PDP(s)</h4>
+        <div class="desc">Any policy engine via authz callout protocol. Pluggable. Trust DAG owns the proxy and metadata &mdash; policy decision is delegated.</div>
+        <div><span class="tag tag-enforce">enforce</span></div>
+      </div>
+
+      <div class="comp-box" style="border-color: #f85149;">
+        <h4 style="color: #f85149;">Decision Combiner</h4>
+        <div class="desc">All must allow (AND). Any can deny (fail-closed). Returns: allow | deny + reason.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="oneliner">
+    Proxies <span class="green">observe</span> &rarr; OTel Collector pipelines spans &rarr; Lineage Service <span class="accent">reconstructs</span> DAG &rarr; Enforcer Plugins <span class="orange">decide</span>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 2: Request Lifecycle ═══════════════ -->
+<div class="slide" id="slide-2">
+  <div class="slide-title">Request <span class="accent">Lifecycle</span></div>
+  <div class="slide-subtitle">alice sends "show me sales data" &mdash; every hop observed, every delegation authorized</div>
+
+  <div class="flow-container">
+    <div class="flow-step">
+      <div class="flow-num" style="color:#bc8cff;">1</div>
+      <div class="flow-component fc-ingress">Ingress Gateway</div>
+      <div class="flow-action">
+        <span class="label">Extract identity</span> &rarr; <code>user:alice</code> from JWT. Stamp <code>x-principal-id</code>, <code>x-caller-id</code>, <code>x-request-id</code>, <code>x-trust-hop-kind=ingress</code>. Emit span.
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-num" style="color:#3fb950;">2</div>
+      <div class="flow-component fc-sidecar-in">Sidecar inbound</div>
+      <div class="flow-action">
+        <span class="label">chat-agent</span> &mdash; Emit span: <code>user:alice &rarr; agent:chat-agent</code>. Authz &rarr; OPA: principal allowed? <span class="green">&#10003;</span> Trust Score: novelty ok? <span class="green">&#10003;</span> Forward to app.
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-num" style="color:#238636;">3</div>
+      <div class="flow-component fc-sidecar-out">Sidecar outbound</div>
+      <div class="flow-action">
+        <span class="label">chat-agent &rarr; sales-agent</span> &mdash; Mutate: <code>x-caller-id=agent:chat-agent</code>, <code>hop_kind=delegation</code>. Preserve: <code>x-principal-id</code>, <code>x-request-id</code>. Route to sales-agent sidecar.
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-num" style="color:#3fb950;">4</div>
+      <div class="flow-component fc-sidecar-in">Sidecar inbound</div>
+      <div class="flow-action">
+        <span class="label">sales-agent</span> &mdash; Emit span: <code>agent:chat-agent &rarr; agent:sales-agent</code>. Authz &rarr; OPA: chat-agent can delegate? <span class="green">&#10003;</span> Trust Score: depth=2 &lt; max? <span class="green">&#10003;</span>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-num" style="color:#238636;">5</div>
+      <div class="flow-component fc-sidecar-out">Sidecar outbound</div>
+      <div class="flow-action">
+        <span class="label">sales-agent &rarr; mock-database</span> &mdash; Mutate: <code>x-caller-id=agent:sales-agent</code>, <code>hop_kind=resource_access</code>. Route to database.
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-num" style="color:#3fb950;">6</div>
+      <div class="flow-component fc-sidecar-in">Sidecar inbound</div>
+      <div class="flow-action">
+        <span class="label">mock-database</span> &mdash; Emit span: <code>agent:sales-agent &rarr; resource:mock-database</code>. Authz &rarr; OPA: declared dependency? <span class="green">&#10003;</span>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-num" style="color:#58a6ff;">7</div>
+      <div class="flow-component fc-lineage">Lineage Service</div>
+      <div class="flow-action">
+        <span class="label">Async</span> &mdash; Collect all spans for <code>trust.run_id</code>. Reconstruct DAG: <code>alice &rarr; chat &rarr; sales &rarr; db</code>. Score against baseline &rarr; verdict. Store for provenance queries.
+      </div>
+    </div>
+  </div>
+
+  <div class="oneliner">
+    <code>x-principal-id</code> and <code>x-request-id</code> are <span class="green">immutable</span> &mdash; set once at ingress.
+    <code>x-caller-id</code> and <code>x-trust-hop-kind</code> are <span class="orange">mutated</span> at each outbound hop.
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 3: Enforcer Plugins ═══════════════ -->
+<div class="slide" id="slide-3">
+  <div class="slide-title">Enforcer <span class="orange">Plugins</span></div>
+  <div class="slide-subtitle">The inbound sidecar calls all enforcers before the agent sees the request &mdash; fail-closed, any can deny</div>
+
+  <div class="enforcer-grid">
+    <div class="enforcer-card" style="border-color: #d29922;">
+      <h4><span class="orange">OPA</span></h4>
+      <p>Policy rules evaluated locally against trust context.</p>
+      <ul>
+        <li><span>Input:</span> trust headers, agent card, request metadata</li>
+        <li><span>Deny if</span> no principal in chain</li>
+        <li><span>Deny if</span> target not in declared dependencies</li>
+        <li><span>Deny if</span> caller not in allowed callers</li>
+        <li><span>Allow if</span> no deny rules triggered</li>
+      </ul>
+    </div>
+
+    <div class="enforcer-card" style="border-color: #d29922;">
+      <h4><span class="orange">Trust Score Engine</span></h4>
+      <p>Real-time risk scoring from lineage baseline + external evals.</p>
+      <ul>
+        <li><span>Novel edge:</span> agent calling a new target</li>
+        <li><span>Novel resource:</span> first-time access</li>
+        <li><span>Depth exceeded:</span> chain deeper than threshold</li>
+        <li><span>Fanout exceeded:</span> too many delegations</li>
+        <li><span>Retry storm:</span> repeated calls, short window</li>
+        <li><span>Capability overreach:</span> undeclared dependency</li>
+        <li><span>Agent evals:</span> quality, safety, hallucination</li>
+      </ul>
+    </div>
+
+    <div class="enforcer-card" style="border-color: #d29922;">
+      <h4><span class="orange">External PDP(s)</span></h4>
+      <p>Any policy engine via standard authz callout protocol.</p>
+      <ul>
+        <li><span>Input:</span> same trust context (headers, card, metadata)</li>
+        <li><span>Output:</span> allow / deny</li>
+        <li><span>Protocol:</span> gRPC or HTTP</li>
+        <li><span>Pluggable:</span> connect to any number of PDPs</li>
+        <li><span>Composable:</span> external trust frameworks plug in here</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="combiner-bar">
+    <span class="orange">Decision Combiner</span>: all must allow (AND) &bull; any can deny (fail-closed) &bull;
+    returns: <span class="green">allow</span> | <span class="red">deny + reason</span>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 4: Trust Headers ═══════════════ -->
+<div class="slide" id="slide-4">
+  <div class="slide-title">Trust Header <span class="accent">Propagation</span></div>
+  <div class="slide-subtitle">How headers transform hop by hop &mdash; principal and run_id are immutable, caller and hop_kind mutate</div>
+
+  <div style="flex:1; overflow-y: auto;">
+    <table class="header-table">
+      <thead>
+        <tr>
+          <th>Hop</th>
+          <th><code>x-principal-id</code></th>
+          <th><code>x-caller-id</code></th>
+          <th><code>x-caller-type</code></th>
+          <th><code>x-request-id</code></th>
+          <th><code>x-trust-hop-kind</code></th>
+          <th>Span emitted</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="hop-label">Ingress &rarr; chat-agent</td>
+          <td class="immutable"><code>user:alice</code></td>
+          <td class="mutable"><code>user:alice</code></td>
+          <td class="mutable"><code>principal</code></td>
+          <td class="immutable"><code>run-7a3b</code></td>
+          <td class="mutable"><code>ingress</code></td>
+          <td class="dim">alice &rarr; chat-agent</td>
+        </tr>
+        <tr>
+          <td class="hop-label">chat-agent &rarr; sales-agent</td>
+          <td class="immutable"><code>user:alice</code></td>
+          <td class="mutable"><code>agent:chat-agent</code></td>
+          <td class="mutable"><code>agent</code></td>
+          <td class="immutable"><code>run-7a3b</code></td>
+          <td class="mutable"><code>delegation</code></td>
+          <td class="dim">chat &rarr; sales</td>
+        </tr>
+        <tr>
+          <td class="hop-label">sales-agent &rarr; mock-database</td>
+          <td class="immutable"><code>user:alice</code></td>
+          <td class="mutable"><code>agent:sales-agent</code></td>
+          <td class="mutable"><code>agent</code></td>
+          <td class="immutable"><code>run-7a3b</code></td>
+          <td class="mutable"><code>resource_access</code></td>
+          <td class="dim">sales &rarr; database</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top: 32px; display: flex; gap: 24px;">
+      <div style="flex:1; background:#161b22; border:1px solid #21262d; border-radius:8px; padding:20px;">
+        <h4 style="font-size:14px; color:#3fb950; margin-bottom:10px;">Immutable (set once at ingress)</h4>
+        <p style="font-size:13px; color:#8b949e; line-height:1.6;">
+          <code>x-principal-id</code> &mdash; the verified identity of the original caller. Carried unchanged through every hop so any point in the chain can answer: who started this?<br><br>
+          <code>x-request-id</code> &mdash; correlation ID for the entire delegation run. Every span in the chain shares this as <code>trust.run_id</code>.
+        </p>
+      </div>
+      <div style="flex:1; background:#161b22; border:1px solid #21262d; border-radius:8px; padding:20px;">
+        <h4 style="font-size:14px; color:#d29922; margin-bottom:10px;">Mutable (updated at each outbound hop)</h4>
+        <p style="font-size:13px; color:#8b949e; line-height:1.6;">
+          <code>x-caller-id</code> &mdash; updated by each outbound sidecar to the current agent's identity.<br><br>
+          <code>x-caller-type</code> &mdash; <code>principal</code> at ingress, <code>agent</code> after first hop.<br><br>
+          <code>x-trust-hop-kind</code> &mdash; <code>ingress</code> &rarr; <code>delegation</code> &rarr; <code>resource_access</code>.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ SLIDE 5: Component Summary ═══════════════ -->
+<div class="slide" id="slide-5">
+  <div class="slide-title">Component <span class="accent">Summary</span></div>
+  <div class="slide-subtitle">All components, what they do, and which function they serve</div>
+
+  <div style="flex:1; overflow-y:auto;">
+    <table class="header-table">
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th>Role</th>
+          <th>Function</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong style="color:#bc8cff;">Ingress Gateway</strong></td>
+          <td>Identity extraction, trust header stamping, first-hop span emission</td>
+          <td><span class="tag tag-observe">observe</span></td>
+        </tr>
+        <tr>
+          <td><strong style="color:#3fb950;">Proxy Sidecar</strong></td>
+          <td>Inbound: span emission + enforcement callout. Outbound: header mutation + routing</td>
+          <td><span class="tag tag-observe">observe</span><span class="tag tag-enforce">enforce</span></td>
+        </tr>
+        <tr>
+          <td><strong style="color:#58a6ff;">OTel Collector</strong></td>
+          <td>Span aggregation, batching, enrichment, export to trace backend</td>
+          <td><span class="tag tag-observe">observe</span></td>
+        </tr>
+        <tr>
+          <td><strong style="color:#8b949e;">Trace Backend</strong></td>
+          <td>Pluggable span storage, queried by lineage service</td>
+          <td><span class="tag tag-reconstruct">reconstruct</span></td>
+        </tr>
+        <tr>
+          <td><strong style="color:#58a6ff;">Lineage Service</strong></td>
+          <td>DAG reconstruction, explain (provenance), assess (risk scoring), capability alignment</td>
+          <td><span class="tag tag-reconstruct">reconstruct</span></td>
+        </tr>
+        <tr>
+          <td><strong style="color:#d29922;">OPA</strong></td>
+          <td>Policy evaluation on trust headers + agent cards</td>
+          <td><span class="tag tag-enforce">enforce</span></td>
+        </tr>
+        <tr>
+          <td><strong style="color:#d29922;">Trust Score Engine</strong></td>
+          <td>Real-time risk scoring from lineage baseline + agent evals</td>
+          <td><span class="tag tag-enforce">enforce</span><span class="tag tag-reconstruct">reconstruct</span></td>
+        </tr>
+        <tr>
+          <td><strong style="color:#d29922;">External PDP(s)</strong></td>
+          <td>Pluggable policy engines via authz callout protocol</td>
+          <td><span class="tag tag-enforce">enforce</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="oneliner">
+    One infrastructure layer. No agent instrumentation. <span class="green">Observe</span> + <span class="accent">Reconstruct</span> + <span class="orange">Enforce</span>.
+  </div>
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+  <button onclick="go(-1)">&larr; Prev</button>
+  <button onclick="go(1)">Next &rarr;</button>
+</div>
+<div class="slide-num" id="slide-num">1 / 5</div>
+
+<script>
+  let current = 1;
+  const total = 5;
+  function go(dir) {
+    const next = current + dir;
+    if (next < 1 || next > total) return;
+    document.getElementById(`slide-${current}`).classList.remove('active');
+    current = next;
+    document.getElementById(`slide-${current}`).classList.add('active');
+    document.getElementById('slide-num').textContent = `${current} / ${total}`;
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ') go(1);
+    if (e.key === 'ArrowLeft') go(-1);
+  });
+</script>
+</body>
+</html>
