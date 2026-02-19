@@ -208,34 +208,38 @@
   </div>
 </div>
 
-<!-- ═══════════════ SLIDE 2: Core Value ═══════════════ -->
+<!-- ═══════════════ SLIDE 2: Trust DAG — Observe, Reconstruct, Enforce ═══════════════ -->
 <div class="slide" id="slide-2">
   <div class="logo-line">TRUST GRAPH + OPENTELEMETRY</div>
-  <div class="slide-title">Trust DAG: <span class="accent">delegation provenance</span></div>
-  <div class="slide-subtitle">Captures Principal &rarr; Agent &rarr; Agent &rarr; Resource chains without agent instrumentation</div>
+  <div class="slide-title">Trust DAG: a trust-aware <span class="accent">data plane</span></div>
+  <div class="slide-subtitle">MLflow traces what happened inside the agent. Trust DAG captures the delegation chain across agents &mdash; and uses it to reconstruct lineage, detect anomalies, and enforce policy.</div>
 
   <div style="flex:1">
     <div class="big-point">
-      <div class="big-num">1</div>
+      <div class="big-num" style="color:#3fb950;">1</div>
       <div class="big-text">
-        <h3>Full delegation lineage per request</h3>
-        <p>Every request carries a provenance chain: which principal initiated it, which agents acted on their behalf, and which resources were accessed. This is the accountability question &mdash; not "what model ran" but "who is responsible."</p>
+        <h3><span class="green">Observe</span></h3>
+        <p>Proxy sidecars capture who delegated to whom at every hop. Trust metadata &mdash; principal, caller, target, hop kind &mdash; is propagated as headers and tagged on spans. The observation point sits <strong>outside the agent's trust boundary</strong>. A compromised agent cannot alter its own trace data. No SDKs, no agent code changes.</p>
       </div>
     </div>
     <div class="big-point">
       <div class="big-num">2</div>
       <div class="big-text">
-        <h3>Observed at the <span class="accent">infrastructure layer</span></h3>
-        <p>Envoy sidecars emit spans for every inter-service call. Trust metadata (principal, caller, target, hop kind) is propagated as headers and tagged on spans. No agent instrumentation &mdash; the observation point is the service mesh, not the application.</p>
+        <h3><span class="accent">Reconstruct</span></h3>
+        <p>A lineage service builds the actual delegation DAG from trust-tagged spans. Nodes are typed (principal, agent, resource). Each run is scored against learned baselines to detect novel edges, capability overreach, and anomalous patterns.</p>
       </div>
     </div>
     <div class="big-point">
-      <div class="big-num">3</div>
+      <div class="big-num" style="color:#d29922;">3</div>
       <div class="big-text">
-        <h3>Behavioral <span class="orange">assessment</span> from DAG topology</h3>
-        <p>Each run produces a Trust DAG. We compare it against historical baselines to detect novel edges, novel delegation paths, fanout spikes, retry storms, and capability alignment violations &mdash; scored into an automated risk assessment.</p>
+        <h3><span class="orange">Enforce</span></h3>
+        <p>The same proxy that observes calls out to pluggable policy engines to block high-risk requests before they reach the agent. Risk signals from the DAG, capability alignment, and external inputs like agent evals all feed into the verdict.</p>
       </div>
     </div>
+  </div>
+
+  <div class="oneliner">
+    One infrastructure layer: <span class="green">observes</span> delegation, <span class="accent">reconstructs</span> lineage, <span class="orange">enforces</span> policy
   </div>
 </div>
 
