@@ -937,6 +937,7 @@ data:
         <button class="nav-btn active" data-view="agents" onclick="dash.switchView('agents')">Agents</button>
         <button class="nav-btn" data-view="users" onclick="dash.switchView('users')">Users</button>
         <button class="nav-btn" data-view="system" onclick="dash.switchView('system')">System</button>
+        <button class="nav-btn" data-view="policy" onclick="dash.switchView('policy')">Policy</button>
         <button class="nav-btn" data-view="chat" onclick="dash.switchView('chat')">Chat</button>
         <div class="sidebar-links">
           <a href="/ui">Trust DAG</a>
@@ -960,6 +961,56 @@ data:
         <div id="view-agents" class="view active"></div>
         <div id="view-users" class="view"></div>
         <div id="view-system" class="view"></div>
+        <div id="view-policy" class="view">
+          <div class="policy-layout">
+            <div class="policy-test-panel">
+              <h3 class="policy-heading">Policy Enforcement Test</h3>
+              <div class="policy-form">
+                <div class="policy-field">
+                  <label>Caller</label>
+                  <select id="policy-caller">
+                    <option value="agent:chat-agent">agent:chat-agent</option>
+                    <option value="agent:read-agent">agent:read-agent</option>
+                    <option value="agent:summary-agent">agent:summary-agent</option>
+                    <option value="agent:sales-agent">agent:sales-agent</option>
+                    <option value="agent:rogue-agent">agent:rogue-agent</option>
+                  </select>
+                </div>
+                <div class="policy-field">
+                  <label>Caller Type</label>
+                  <select id="policy-caller-type">
+                    <option value="agent">agent</option>
+                    <option value="principal">principal</option>
+                  </select>
+                </div>
+                <div class="policy-field">
+                  <label>Target</label>
+                  <select id="policy-target">
+                    <option value="agent:read-agent">agent:read-agent</option>
+                    <option value="agent:chat-agent">agent:chat-agent</option>
+                    <option value="agent:summary-agent">agent:summary-agent</option>
+                    <option value="agent:sales-agent">agent:sales-agent</option>
+                    <option value="resource:mock-database">resource:mock-database</option>
+                  </select>
+                </div>
+                <div class="policy-field">
+                  <label>Principal</label>
+                  <input id="policy-principal" type="text" value="alice">
+                </div>
+                <button class="policy-test-btn" onclick="dash.testPolicy()">Test Policy</button>
+              </div>
+              <div id="policy-result"></div>
+            </div>
+            <div class="policy-rules-panel">
+              <h3 class="policy-heading">Active Rules</h3>
+              <div id="policy-rules-list"></div>
+            </div>
+            <div class="policy-log-panel">
+              <h3 class="policy-heading">Decision Log <button class="copy-btn" onclick="dash.clearPolicyLog()">Clear</button></h3>
+              <div id="policy-log"></div>
+            </div>
+          </div>
+        </div>
         <div id="view-chat" class="view">
           <div id="chat-transcript"></div>
           <div id="chat-composer">
@@ -1130,6 +1181,75 @@ data:
     .source-registered { color: #5cb85c; }
     .source-observed { color: #f39c12; }
 
+    /* Policy view */
+    #view-policy { display: none; flex-direction: column; }
+    #view-policy.active { display: flex; }
+    .policy-layout { display: flex; flex-direction: column; gap: 16px; flex: 1; overflow-y: auto; }
+    .policy-test-panel, .policy-rules-panel, .policy-log-panel {
+      background: #16213e; border: 1px solid #0f3460; border-radius: 4px; padding: 16px;
+    }
+    .policy-heading {
+      font-size: 13px; color: #4a90d9; margin-bottom: 12px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .policy-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    .policy-field { display: flex; flex-direction: column; gap: 4px; }
+    .policy-field label {
+      font-size: 11px; color: #95a5a6; text-transform: uppercase; font-weight: 600;
+    }
+    .policy-field select, .policy-field input {
+      background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0;
+      padding: 6px 10px; border-radius: 4px; font-family: monospace; font-size: 13px;
+      min-width: 180px;
+    }
+    .policy-field select:focus, .policy-field input:focus { outline: none; border-color: #4a90d9; }
+    .policy-test-btn {
+      background: #0f3460; color: #e0e0e0; border: 1px solid #4a90d9;
+      padding: 6px 20px; border-radius: 4px; cursor: pointer;
+      font-size: 13px; font-family: inherit; height: 34px;
+    }
+    .policy-test-btn:hover { background: #4a90d9; color: #fff; }
+    #policy-result { margin-top: 12px; }
+    .policy-verdict {
+      padding: 10px 16px; border-radius: 4px; font-size: 14px;
+      font-weight: 600; display: flex; align-items: center; gap: 10px;
+    }
+    .policy-verdict.allow {
+      background: #1a3e1a; border: 1px solid #2d5a2d; color: #5cb85c;
+    }
+    .policy-verdict.deny {
+      background: #3e1a1a; border: 1px solid #5a2d2d; color: #e74c3c;
+    }
+    .policy-verdict .verdict-reason {
+      font-size: 12px; font-weight: 400; color: #95a5a6;
+    }
+    .policy-rule-item {
+      padding: 8px 10px; margin-bottom: 4px; background: #1a1a2e;
+      border: 1px solid #0f3460; border-radius: 4px; font-size: 13px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .policy-rule-item .rule-caller { color: #5cb85c; }
+    .policy-rule-item .rule-arrow { color: #95a5a6; }
+    .policy-rule-item .rule-target { color: #e67e22; }
+    .policy-rule-item .rule-action {
+      margin-left: auto; padding: 2px 8px; border-radius: 3px; font-size: 11px;
+      font-weight: 600;
+    }
+    .rule-action.allow { background: #1a3e1a; color: #5cb85c; }
+    .rule-action.deny { background: #3e1a1a; color: #e74c3c; }
+    .policy-default {
+      padding: 8px 10px; margin-top: 8px; font-size: 12px; color: #95a5a6;
+      border-top: 1px solid #0f3460;
+    }
+    .policy-log-entry {
+      padding: 6px 10px; margin-bottom: 4px; font-size: 12px;
+      font-family: monospace; border-radius: 3px;
+    }
+    .policy-log-entry.allow { background: #1a3e1a; border-left: 3px solid #5cb85c; }
+    .policy-log-entry.deny { background: #3e1a1a; border-left: 3px solid #e74c3c; }
+    .log-time { color: #555; margin-right: 8px; }
+
     /* Chat view */
     #view-chat { display: none; flex-direction: column; }
     #view-chat.active { display: flex; }
@@ -1232,6 +1352,7 @@ data:
         if (view === 'agents') this.loadAgents();
         else if (view === 'users') this.loadUsers();
         else if (view === 'system') this.loadSystem();
+        else if (view === 'policy') this.loadPolicy();
       },
 
       esc(str) {
@@ -1434,6 +1555,83 @@ data:
         html += '</div>';
 
         el.innerHTML = html;
+      },
+
+      /* ── Policy View ── */
+
+      async loadPolicy() {
+        try {
+          const resp = await fetch(`${this.coreBase()}/policy/rules`);
+          const data = await resp.json();
+          this.renderPolicyRules(data);
+        } catch (e) {
+          document.getElementById('policy-rules-list').innerHTML =
+            `<div class="empty-state">Failed to load rules: ${this.esc(e.message)}</div>`;
+        }
+      },
+
+      renderPolicyRules(policy) {
+        const el = document.getElementById('policy-rules-list');
+        const rules = policy.rules || [];
+        let html = '';
+        rules.forEach(r => {
+          const caller = r.caller || `[${r.caller_type}:*]`;
+          const actionClass = r.action === 'allow' ? 'allow' : 'deny';
+          html += `<div class="policy-rule-item">
+            <span class="rule-caller">${this.esc(caller)}</span>
+            <span class="rule-arrow">&rarr;</span>
+            <span class="rule-target">${this.esc(r.target)}</span>
+            <span class="rule-action ${actionClass}">${this.esc(r.action)}</span>
+          </div>`;
+        });
+        html += `<div class="policy-default">Default: <strong>${this.esc(policy.default || 'deny')}</strong></div>`;
+        el.innerHTML = html;
+      },
+
+      async testPolicy() {
+        const caller_id = document.getElementById('policy-caller').value;
+        const caller_type = document.getElementById('policy-caller-type').value;
+        const target = document.getElementById('policy-target').value;
+        const principal_id = document.getElementById('policy-principal').value || 'anonymous';
+
+        try {
+          const resp = await fetch(`${this.coreBase()}/policy/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ caller_id, caller_type, target, principal_id }),
+          });
+          const data = await resp.json();
+          this.showPolicyResult(data);
+          this.addPolicyLog(caller_id, target, data);
+        } catch (e) {
+          document.getElementById('policy-result').innerHTML =
+            `<div class="policy-verdict deny">ERROR: ${this.esc(e.message)}</div>`;
+        }
+      },
+
+      showPolicyResult(data) {
+        const cls = data.allowed ? 'allow' : 'deny';
+        const label = data.allowed ? 'ALLOW' : 'DENY';
+        document.getElementById('policy-result').innerHTML =
+          `<div class="policy-verdict ${cls}">
+            ${label}
+            <span class="verdict-reason">${this.esc(data.reason)}</span>
+          </div>`;
+      },
+
+      addPolicyLog(caller, target, data) {
+        const el = document.getElementById('policy-log');
+        const cls = data.allowed ? 'allow' : 'deny';
+        const label = data.allowed ? 'ALLOW' : 'DENY';
+        const time = new Date().toLocaleTimeString();
+        const entry = document.createElement('div');
+        entry.className = `policy-log-entry ${cls}`;
+        entry.innerHTML = `<span class="log-time">${time}</span>${label} ${this.esc(caller)} &rarr; ${this.esc(target)} <span class="verdict-reason">(${this.esc(data.reason)})</span>`;
+        el.prepend(entry);
+      },
+
+      clearPolicyLog() {
+        document.getElementById('policy-log').innerHTML = '';
       },
 
       /* ── Chat View ── */

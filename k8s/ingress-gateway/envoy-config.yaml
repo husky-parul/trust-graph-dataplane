@@ -95,6 +95,13 @@ data:
                                 cluster: lineage_service
                               decorator:
                                 operation: "system-api"
+                            # Policy Decision Service
+                            - match:
+                                prefix: "/policy"
+                              route:
+                                cluster: pdp_service
+                              decorator:
+                                operation: "policy-api"
                             # Agent cards API
                             - match:
                                 prefix: "/agent-cards"
@@ -265,6 +272,19 @@ data:
                       address:
                         socket_address:
                           address: lineage-service.workloads.svc.cluster.local
+                          port_value: 8080
+
+        - name: pdp_service
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: pdp_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: policy-decision-service.workloads.svc.cluster.local
                           port_value: 8080
 
         - name: chat_agent_service

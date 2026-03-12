@@ -34,6 +34,9 @@ kubectl apply -f /tmp/agent-cards-cm.yaml
 echo "Deploying UI..."
 kubectl apply -f "${K8S_DIR}/workloads/lineage-ui.yaml"
 
+echo "Deploying policy decision service..."
+kubectl apply -f "${K8S_DIR}/workloads/policy-decision-service.yaml"
+
 echo "Deploying agent workloads..."
 kubectl apply -f "${K8S_DIR}/workloads/mock-database.yaml"
 kubectl apply -f "${K8S_DIR}/workloads/read-agent.yaml"
