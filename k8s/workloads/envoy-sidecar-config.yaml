@@ -74,7 +74,25 @@ data:
                                   hop_kind = "agent_to_agent"
                                 end
                                 request_handle:headers():add("x-trust-hop-kind", hop_kind)
+                                request_handle:headers():replace("x-trust-target", "agent:summary-agent")
                               end
+                      - name: envoy.filters.http.ext_authz
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                          http_service:
+                            server_uri:
+                              uri: policy-decision-service.workloads.svc.cluster.local:8080
+                              cluster: pdp_service
+                              timeout: 2s
+                            authorization_request:
+                              allowed_headers:
+                                patterns:
+                                  - exact: x-caller-id
+                                  - exact: x-caller-type
+                                  - exact: x-trust-target
+                                  - exact: x-principal-id
+                                  - exact: x-trust-hop-kind
+                          failure_mode_allow: false
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -167,6 +185,19 @@ data:
                         socket_address:
                           address: read-agent.workloads.svc.cluster.local
                           port_value: 15001
+
+        - name: pdp_service
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: pdp_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: policy-decision-service.workloads.svc.cluster.local
+                          port_value: 8080
 
         - name: otel_collector
           type: STRICT_DNS
@@ -263,7 +294,25 @@ data:
                                   hop_kind = "agent_to_agent"
                                 end
                                 request_handle:headers():add("x-trust-hop-kind", hop_kind)
+                                request_handle:headers():replace("x-trust-target", "agent:sales-agent")
                               end
+                      - name: envoy.filters.http.ext_authz
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                          http_service:
+                            server_uri:
+                              uri: policy-decision-service.workloads.svc.cluster.local:8080
+                              cluster: pdp_service
+                              timeout: 2s
+                            authorization_request:
+                              allowed_headers:
+                                patterns:
+                                  - exact: x-caller-id
+                                  - exact: x-caller-type
+                                  - exact: x-trust-target
+                                  - exact: x-principal-id
+                                  - exact: x-trust-hop-kind
+                          failure_mode_allow: false
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -355,6 +404,19 @@ data:
                       address:
                         socket_address:
                           address: mock-database.workloads.svc.cluster.local
+                          port_value: 8080
+
+        - name: pdp_service
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: pdp_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: policy-decision-service.workloads.svc.cluster.local
                           port_value: 8080
 
         - name: otel_collector
@@ -452,7 +514,25 @@ data:
                                   hop_kind = "agent_to_agent"
                                 end
                                 request_handle:headers():add("x-trust-hop-kind", hop_kind)
+                                request_handle:headers():replace("x-trust-target", "agent:chat-agent")
                               end
+                      - name: envoy.filters.http.ext_authz
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                          http_service:
+                            server_uri:
+                              uri: policy-decision-service.workloads.svc.cluster.local:8080
+                              cluster: pdp_service
+                              timeout: 2s
+                            authorization_request:
+                              allowed_headers:
+                                patterns:
+                                  - exact: x-caller-id
+                                  - exact: x-caller-type
+                                  - exact: x-trust-target
+                                  - exact: x-principal-id
+                                  - exact: x-trust-hop-kind
+                          failure_mode_allow: false
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -601,6 +681,19 @@ data:
                           address: sales-agent.workloads.svc.cluster.local
                           port_value: 15001
 
+        - name: pdp_service
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: pdp_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: policy-decision-service.workloads.svc.cluster.local
+                          port_value: 8080
+
         - name: otel_collector
           type: STRICT_DNS
           lb_policy: ROUND_ROBIN
@@ -696,7 +789,26 @@ data:
                                   hop_kind = "agent_to_agent"
                                 end
                                 request_handle:headers():add("x-trust-hop-kind", hop_kind)
+                                -- Set trust target for ext_authz evaluation
+                                request_handle:headers():replace("x-trust-target", "agent:read-agent")
                               end
+                      - name: envoy.filters.http.ext_authz
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                          http_service:
+                            server_uri:
+                              uri: policy-decision-service.workloads.svc.cluster.local:8080
+                              cluster: pdp_service
+                              timeout: 2s
+                            authorization_request:
+                              allowed_headers:
+                                patterns:
+                                  - exact: x-caller-id
+                                  - exact: x-caller-type
+                                  - exact: x-trust-target
+                                  - exact: x-principal-id
+                                  - exact: x-trust-hop-kind
+                          failure_mode_allow: false
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -788,6 +900,19 @@ data:
                       address:
                         socket_address:
                           address: mock-database.workloads.svc.cluster.local
+                          port_value: 8080
+
+        - name: pdp_service
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: pdp_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: policy-decision-service.workloads.svc.cluster.local
                           port_value: 8080
 
         - name: otel_collector
