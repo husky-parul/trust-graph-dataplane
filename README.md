@@ -17,31 +17,31 @@ Principal → Agent → (Agent → …) → Resource
 ```
                    ┌──────────────────────────────────────────────────────────┐
                    │                    Trust DAG Data Plane                  │
-                   │                                                         │
- alice ──────────> │  Ingress Gateway                                        │
+                   │                                                          │
+ alice ──────────> │  Ingress Gateway                                         │
                    │  (identity extraction + trust header stamping)           │
-                   │       │                                                 │
-                   │       ▼                                                 │
-                   │  ┌──────────┐   ┌──────────┐   ┌──────────┐            │
-                   │  │chat-agent│──>│read-agent │──>│mock-     │            │
-                   │  │+ sidecar │   │+ sidecar  │   │database  │            │
-                   │  └──────────┘   └──────────┘   └──────────┘            │
-                   │       │                                                 │
-                   │       ├────────>┌─────────────┐                         │
-                   │       │         │summary-agent│──> read-agent ──> db    │
-                   │       │         │+ sidecar    │                         │
-                   │       │         └─────────────┘                         │
-                   │       │                                                 │
-                   │       └────────>┌───────────┐                           │
-                   │                 │sales-agent│──> db                     │
-                   │                 │+ sidecar  │                           │
-                   │                 └───────────┘                           │
-                   │                                                         │
-                   │  OTel spans ──> OTel Collector ──> Trace Backend        │
-                   │                                        │                │
-                   │                                        ▼                │
-                   │                                  Lineage Service        │
-                   │                                  (DAG, Explain, Assess) │
+                   │       │                                                  │
+                   │       ▼                                                  │
+                   │  ┌──────────┐   ┌───────────┐   ┌─────────┐              │
+                   │  │chat-agent│──>│read-agent │──>│mock-    │              │
+                   │  │+ sidecar │   │+ sidecar  │   │database │              │
+                   │  └──────────┘   └───────────┘   └─────────┘              │
+                   │       │                                                  │
+                   │       ├────────>┌─────────────┐                          │
+                   │       │         │summary-agent│──> read-agent ──> db     │
+                   │       │         │+ sidecar    │                          │
+                   │       │         └─────────────┘                          │
+                   │       │                                                  │
+                   │       └────────>┌───────────┐                            │
+                   │                 │sales-agent│──> db                      │
+                   │                 │+ sidecar  │                            │
+                   │                 └───────────┘                            │
+                   │                                                          │
+                   │  OTel spans ──> OTel Collector ──> Trace Backend         │
+                   │                                        │                 │
+                   │                                        ▼                 │
+                   │                                  Lineage Service         │
+                   │                                  (DAG, Explain, Assess)  │
                    └──────────────────────────────────────────────────────────┘
 ```
 
